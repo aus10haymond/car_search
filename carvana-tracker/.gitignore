@@ -1,5 +1,5 @@
 .env
-carvana_results/*
+carvana_results/
 __pycache__/
 *.pyc
 *.pyo

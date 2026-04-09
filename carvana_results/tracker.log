@@ -1,2 +1,0 @@
-2026-04-08T18:44:40 [DEBUG   ] urllib3.connectionpool — Starting new HTTP connection (1): localhost:11434
-2026-04-08T18:44:44 [DEBUG   ] analysis.ollama_client — Ollama is_available check failed: HTTPConnectionPool(host='localhost', port=11434): Max retries exceeded with url: /api/tags (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001B46BFD37D0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
