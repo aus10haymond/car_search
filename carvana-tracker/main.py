@@ -71,8 +71,8 @@ def run_once(
 
         # ── Phase 1: Scrape ───────────────────────────────────────────────────
         log.info("--- PHASE 1: SCRAPING ---")
-        if config.FUEL_TYPE_FILTER:
-            log.info("Fuel type filter: %s", config.FUEL_TYPE_FILTER)
+        if config.FUEL_TYPE_FILTERS:
+            log.info("Fuel type searches: %s", ", ".join(f or "all" for f in config.FUEL_TYPE_FILTERS))
         all_raw, vehicle_stats = _scrape(run_id)
 
         _log_scrape_summary(vehicle_stats, all_raw)
@@ -165,44 +165,50 @@ def run_once(
 # ── Scraping ──────────────────────────────────────────────────────────────────
 
 def _scrape(run_id: str) -> tuple[list[dict], list[dict]]:
-    """Scrape all vehicles. Returns (all_listings, per_vehicle_stats)."""
+    """Scrape all vehicles across all configured fuel types.
+    Returns (all_listings, per_vehicle_stats)."""
     all_raw: list[dict] = []
     vehicle_stats: list[dict] = []
 
+    fuel_types = config.FUEL_TYPE_FILTERS or [None]
+
     with Browser() as browser:
         for make, model, min_year, max_year in config.VEHICLES:
-            browser.reset_context()
             vehicle_total = 0
             pages_scraped = 0
             strategy_used = "none"
             t0 = time.monotonic()
 
-            for page in range(1, config.MAX_PAGES_PER_SEARCH + 1):
-                url = build_search_url(make, model, min_year, max_year, page, fuel_type=config.FUEL_TYPE_FILTER)
-                log.info("Scraping %s %s (page %d)...", make, model, page)
-                log.debug("URL: %s", url)
+            for fuel_type in fuel_types:
+                browser.reset_context()
+                label = fuel_type or "all"
+                log.info("Scraping %s %s [%s]...", make, model, label)
 
-                html = browser.get_page_content(url)
-                if not html:
-                    log.warning("No HTML returned for %s %s page %d", make, model, page)
-                    break
+                for page in range(1, config.MAX_PAGES_PER_SEARCH + 1):
+                    url = build_search_url(make, model, min_year, max_year, page, fuel_type=fuel_type)
+                    log.debug("URL: %s", url)
 
-                listings = extract_listings(html, make, model)
+                    html = browser.get_page_content(url)
+                    if not html:
+                        log.warning("No HTML returned for %s %s [%s] page %d", make, model, label, page)
+                        break
 
-                if listings:
-                    strategy_used = listings[0].get("extraction_strategy", "unknown")
-                    pages_scraped = page
+                    listings = extract_listings(html, make, model)
 
-                if not listings:
-                    log.info("No listings on page %d for %s %s — stopping pagination", page, make, model)
-                    break
+                    if listings:
+                        strategy_used = listings[0].get("extraction_strategy", "unknown")
+                        pages_scraped = max(pages_scraped, page)
 
-                all_raw.extend(listings)
-                vehicle_total += len(listings)
-                log.debug("%s %s page %d: %d listings", make, model, page, len(listings))
+                    if not listings:
+                        log.info("No listings on page %d for %s %s [%s] — stopping", page, make, model, label)
+                        break
 
-                if len(listings) < 20:
-                    break
+                    all_raw.extend(listings)
+                    vehicle_total += len(listings)
+                    log.debug("%s %s [%s] page %d: %d listings", make, model, label, page, len(listings))
+
+                    if len(listings) < 20:
+                        break
 
             elapsed = time.monotonic() - t0
             vehicle_stats.append({

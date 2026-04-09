@@ -19,7 +19,11 @@ MIN_YEAR     = 2021
 MAX_YEAR     = 2025
 # Set to "Hybrid" to filter Carvana search results to hybrid vehicles only.
 # Set to None to include all fuel types (gas + hybrid).
-FUEL_TYPE_FILTER: str | None = None   # None = all fuel types; "Hybrid" = hybrid only
+# List of fuel type searches to run per vehicle. Each entry triggers a separate
+# Carvana search. Results are merged and deduplicated by VIN.
+# Use [] or [None] for a single unfiltered search.
+# Carvana values: "Hybrid", "Gas" (or try "Gasoline" if Gas yields nothing)
+FUEL_TYPE_FILTERS: list[str | None] = ["Hybrid", "Gas"]
 
 # ── Location ──────────────────────────────────────────────────────────────────
 ZIP_CODE = "85286"   # Phoenix, AZ — used by Carvana for shipping estimates
