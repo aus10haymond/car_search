@@ -54,7 +54,8 @@ ALERT_HYBRID_ONLY     = False
 # ── Email (optional) ──────────────────────────────────────────────────────────
 SEND_EMAIL     = False
 EMAIL_FROM     = os.getenv("EMAIL_FROM", "")
-EMAIL_TO       = os.getenv("EMAIL_TO", "")
+# Comma-separated list of recipient addresses, e.g. "a@gmail.com,b@gmail.com"
+EMAIL_TO       = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")  # Gmail App Password
 
 # ── Scraping behaviour ────────────────────────────────────────────────────────
