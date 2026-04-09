@@ -91,7 +91,10 @@ def run_once(
         # ── Phase 4: Enrich + score ───────────────────────────────────────────
         log.info("--- PHASE 4: ENRICHMENT & SCORING ---")
         enriched = enrich_listings(filtered)
-        enriched.sort(key=lambda x: x.get("value_score") or 0, reverse=True)
+        # Hybrids first, then by value score descending within each group
+        enriched.sort(
+            key=lambda x: (0 if x.get("is_hybrid") else 1, -(x.get("value_score") or 0))
+        )
         _log_enrichment_summary(enriched)
 
         # ── Phase 5: LLM analysis ─────────────────────────────────────────────

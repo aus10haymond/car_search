@@ -19,7 +19,7 @@ MIN_YEAR     = 2021
 MAX_YEAR     = 2025
 # Set to "Hybrid" to filter Carvana search results to hybrid vehicles only.
 # Set to None to include all fuel types (gas + hybrid).
-FUEL_TYPE_FILTER: str | None = "Hybrid"
+FUEL_TYPE_FILTER: str | None = None   # None = all fuel types; "Hybrid" = hybrid only
 
 # ── Location ──────────────────────────────────────────────────────────────────
 ZIP_CODE = "85286"   # Phoenix, AZ — used by Carvana for shipping estimates
