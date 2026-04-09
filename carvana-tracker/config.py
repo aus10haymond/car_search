@@ -35,18 +35,17 @@ DB_PATH    = "./carvana_results/history.db"
 LOG_FILE   = "./carvana_results/tracker.log"
 
 # ── AI analysis ───────────────────────────────────────────────────────────────
-# Primary: local Ollama
-OLLAMA_ENABLED  = True
-OLLAMA_BASE_URL = "http://localhost:11434"
-#OLLAMA_MODEL    = "llama3.1:8b"
-OLLAMA_MODEL    = "gemma3:4b"
-OLLAMA_TIMEOUT  = 120               # seconds
-
-# Fallback: Anthropic API
+# Primary: Anthropic API
 ANTHROPIC_ENABLED    = True
 ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL      = "claude-haiku-4-5-20251001"
 ANTHROPIC_MAX_TOKENS = 1500
+
+# Fallback: local Ollama
+OLLAMA_ENABLED  = True
+OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_MODEL    = "gemma3:4b"
+OLLAMA_TIMEOUT  = 300               # seconds
 
 # ── Alerts ────────────────────────────────────────────────────────────────────
 ALERT_PRICE_THRESHOLD = 30000

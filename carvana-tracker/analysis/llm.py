@@ -1,5 +1,5 @@
 """
-LLM analysis orchestrator — Ollama primary, Anthropic API fallback.
+LLM analysis orchestrator — Anthropic API primary, Ollama fallback.
 
 This is the only module that imports both clients.
 """
@@ -41,16 +41,16 @@ class LLMAnalyzer:
 
     def analyze(self, listings: list[dict]) -> LLMResult:
         """
-        1. If OLLAMA_ENABLED and ollama.is_available():
-               try ollama.analyze(prompt)
-               on success: return result with backend_used="ollama"
-               on OllamaUnavailableError or OllamaModelError:
-                   log WARNING, fall through to step 2
-
-        2. If ANTHROPIC_ENABLED and anthropic.is_configured():
+        1. If ANTHROPIC_ENABLED and anthropic.is_configured():
                try anthropic.analyze(prompt)
                on success: return result with backend_used="anthropic_api"
                on AnthropicUnavailableError:
+                   log WARNING, fall through to step 2
+
+        2. If OLLAMA_ENABLED and ollama.is_available():
+               try ollama.analyze(prompt)
+               on success: return result with backend_used="ollama"
+               on OllamaUnavailableError or OllamaModelError:
                    log ERROR, fall through to step 3
 
         3. Neither backend available:
@@ -60,7 +60,31 @@ class LLMAnalyzer:
         """
         prompt = self.build_prompt(listings)
 
-        # ── Step 1: Ollama ────────────────────────────────────────────────────
+        # ── Step 1: Anthropic API (primary) ───────────────────────────────────
+        if config.ANTHROPIC_ENABLED:
+            if self.anthropic.is_configured():
+                t0 = time.monotonic()
+                try:
+                    text = self.anthropic.analyze(prompt)
+                    latency = int((time.monotonic() - t0) * 1000)
+                    log.info("LLM analysis complete via Anthropic API (%dms)", latency)
+                    self.backend_used = "anthropic_api"
+                    return LLMResult(
+                        analysis=text,
+                        backend_used="anthropic_api",
+                        model_used=config.ANTHROPIC_MODEL,
+                        tokens_used=None,
+                        latency_ms=latency,
+                        error=None,
+                    )
+                except AnthropicUnavailableError as exc:
+                    log.warning("Anthropic API failed: %s — falling back to Ollama", exc)
+            else:
+                log.warning("Anthropic API key not configured — falling back to Ollama")
+        else:
+            log.debug("Anthropic API disabled in config")
+
+        # ── Step 2: Ollama (fallback) ─────────────────────────────────────────
         if config.OLLAMA_ENABLED:
             if self.ollama.is_available():
                 t0 = time.monotonic()
@@ -78,44 +102,11 @@ class LLMAnalyzer:
                         error=None,
                     )
                 except (OllamaUnavailableError, OllamaModelError) as exc:
-                    log.warning("Ollama failed: %s — falling back to Anthropic API", exc)
+                    log.error("Ollama failed: %s — no LLM analysis available", exc)
             else:
-                log.warning("Ollama is not available (model=%s) — falling back to Anthropic API", config.OLLAMA_MODEL)
+                log.warning("Ollama is not available (model=%s) — no LLM analysis available", config.OLLAMA_MODEL)
         else:
             log.debug("Ollama disabled in config")
-
-        # ── Step 2: Anthropic API ─────────────────────────────────────────────
-        if config.ANTHROPIC_ENABLED:
-            if self.anthropic.is_configured():
-                t0 = time.monotonic()
-                try:
-                    text = self.anthropic.analyze(prompt)
-                    latency = int((time.monotonic() - t0) * 1000)
-                    log.info("LLM analysis complete via Anthropic API (%dms)", latency)
-                    self.backend_used = "anthropic_api"
-                    return LLMResult(
-                        analysis=text,
-                        backend_used="anthropic_api",
-                        model_used=config.ANTHROPIC_MODEL,
-                        tokens_used=None,  # populated separately via logged debug
-                        latency_ms=latency,
-                        error=None,
-                    )
-                except AnthropicUnavailableError as exc:
-                    log.error("Anthropic API failed: %s — no LLM analysis available", exc)
-                    self.backend_used = "none"
-                    return LLMResult(
-                        analysis=None,
-                        backend_used="none",
-                        model_used="",
-                        tokens_used=None,
-                        latency_ms=0,
-                        error=str(exc),
-                    )
-            else:
-                log.warning("Anthropic API key not configured — no LLM analysis available")
-        else:
-            log.debug("Anthropic API disabled in config")
 
         # ── Step 3: No backend available ──────────────────────────────────────
         self.backend_used = "none"

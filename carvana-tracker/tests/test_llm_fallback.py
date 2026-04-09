@@ -35,22 +35,24 @@ def _analyzer():
     return analyzer
 
 
-# ── Ollama available → uses Ollama ────────────────────────────────────────────
+# ── Anthropic available → uses Anthropic (primary) ───────────────────────────
 
 def test_uses_ollama_when_available(monkeypatch):
+    """Anthropic is primary; when configured it should be used even if Ollama is available."""
     monkeypatch.setattr("config.OLLAMA_ENABLED",    True)
     monkeypatch.setattr("config.ANTHROPIC_ENABLED", True)
 
     analyzer = _analyzer()
+    analyzer.anthropic.is_configured.return_value = True
+    analyzer.anthropic.analyze.return_value = "Great deal on the RAV4."
     analyzer.ollama.is_available.return_value = True
-    analyzer.ollama.analyze.return_value = "Great deal on the RAV4."
 
     result = analyzer.analyze(_listings())
 
-    assert result.backend_used == "ollama"
+    assert result.backend_used == "anthropic_api"
     assert result.analysis     == "Great deal on the RAV4."
     assert result.error        is None
-    analyzer.anthropic.analyze.assert_not_called()
+    analyzer.ollama.analyze.assert_not_called()
 
 
 # ── Ollama fails → falls back to Anthropic ────────────────────────────────────
@@ -182,15 +184,15 @@ def test_result_is_llmresult_instance(monkeypatch):
 def test_result_has_model_used(monkeypatch):
     monkeypatch.setattr("config.OLLAMA_ENABLED",     True)
     monkeypatch.setattr("config.ANTHROPIC_ENABLED",  True)
-    monkeypatch.setattr("config.OLLAMA_MODEL",       "llama3.1:8b")
+    monkeypatch.setattr("config.ANTHROPIC_MODEL",    "claude-haiku-4-5-20251001")
 
     analyzer = _analyzer()
-    analyzer.ollama.is_available.return_value = True
-    analyzer.ollama.analyze.return_value = "analysis"
+    analyzer.anthropic.is_configured.return_value = True
+    analyzer.anthropic.analyze.return_value = "analysis"
 
     result = analyzer.analyze(_listings())
 
-    assert result.model_used == "llama3.1:8b"
+    assert result.model_used == "claude-haiku-4-5-20251001"
 
 
 # ── build_prompt ──────────────────────────────────────────────────────────────
