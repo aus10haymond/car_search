@@ -6,3 +6,4 @@ __pycache__/
 .pytest_cache/
 scrape_one.py
 debug_page.html
+run_tracker.bat

@@ -13,7 +13,7 @@ VEHICLES = [
 ]
 
 # ── Filters ───────────────────────────────────────────────────────────────────
-MAX_PRICE    = 45000
+MAX_PRICE    = 30000
 MAX_MILEAGE  = 80000
 MIN_YEAR     = 2021
 MAX_YEAR     = 2025
@@ -27,7 +27,7 @@ INTEREST_RATE    = 7.5     # APR percent
 LOAN_TERM_MONTHS = 60
 
 # ── Scheduling ────────────────────────────────────────────────────────────────
-CHECK_INTERVAL_HOURS = 6
+CHECK_INTERVAL_HOURS = 24
 
 # ── Output ────────────────────────────────────────────────────────────────────
 OUTPUT_DIR = "./carvana_results"
@@ -49,11 +49,11 @@ ANTHROPIC_MODEL      = "claude-haiku-4-5-20251001"
 ANTHROPIC_MAX_TOKENS = 1500
 
 # ── Alerts ────────────────────────────────────────────────────────────────────
-ALERT_PRICE_THRESHOLD = 32000
+ALERT_PRICE_THRESHOLD = 30000
 ALERT_HYBRID_ONLY     = False
 
 # ── Email — Mailjet (optional) ────────────────────────────────────────────────
-SEND_EMAIL          = False
+SEND_EMAIL          = True
 EMAIL_FROM          = os.getenv("EMAIL_FROM", "")           # Verified sender address
 EMAIL_FROM_NAME     = os.getenv("EMAIL_FROM_NAME", "Carvana Tracker")
 # Comma-separated list of recipient addresses, e.g. "a@gmail.com,b@gmail.com"
