@@ -296,15 +296,16 @@ def _log_enrichment_summary(enriched: list[dict]) -> None:
     log.info("  Hybrids:   %d", hybrids)
     log.info("  Score:     min=%.0f  avg=%.0f  max=%.0f",
              min(scores), sum(scores) / len(scores), max(scores))
-    log.info("  Price:     min=$%,.0f  avg=$%,.0f  max=$%,.0f",
-             min(prices), sum(prices) / len(prices), max(prices))
+    avg_price = sum(prices) / len(prices)
+    log.info("  Price:     min=$%s  avg=$%s  max=$%s",
+             f"{min(prices):,.0f}", f"{avg_price:,.0f}", f"{max(prices):,.0f}")
     log.info("  By make:   %s", "  ".join(f"{k}={v}" for k, v in sorted(by_make.items())))
     log.debug("  Top 5 by score:")
     for r in enriched[:5]:
-        log.debug("    [%d] %s %s %s %s — $%,.0f | %s mi | score=%.0f",
+        log.debug("    [%d] %s %s %s %s — $%s | %s mi | score=%.0f",
                   enriched.index(r) + 1,
                   r.get("year"), r.get("make"), r.get("model"), r.get("trim", ""),
-                  r.get("price") or 0, r.get("mileage") or "N/A", r.get("value_score") or 0)
+                  f"{r.get('price') or 0:,.0f}", r.get("mileage") or "N/A", r.get("value_score") or 0)
 
 
 def _log_llm_summary(result: LLMResult) -> None:
@@ -324,9 +325,10 @@ def _log_alert_summary(new_vins: set[str], price_drops: list[dict]) -> None:
     log.info("New listings:  %d", len(new_vins))
     log.info("Price drops:   %d", len(price_drops))
     for drop in price_drops:
-        log.info("  Price drop: %s %s %s — $%,.0f -> $%,.0f (%.1f%%)",
+        log.info("  Price drop: %s %s %s — $%s -> $%s (%.1f%%)",
                  drop.get("year"), drop.get("make"), drop.get("model"),
-                 drop.get("prev_price"), drop.get("price"), drop.get("drop_pct"))
+                 f"{drop.get('prev_price') or 0:,.0f}", f"{drop.get('price') or 0:,.0f}",
+                 drop.get("drop_pct"))
 
 
 def _log_run_footer(
