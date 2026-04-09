@@ -35,11 +35,30 @@ class Browser:
             launch_kwargs["proxy"] = {"server": config.PROXY_URL}
 
         self._browser = self._playwright.chromium.launch(**launch_kwargs)
+        self._new_context()
+        log.debug("Browser started (headless=%s)", config.HEADLESS)
+
+    def _new_context(self) -> None:
+        """Create (or replace) the browser context, clearing all cookies/session state."""
+        if self._context:
+            try:
+                self._context.close()
+            except Exception:
+                pass
         self._context = self._browser.new_context(
             user_agent=_USER_AGENT,
             viewport={"width": 1280, "height": 800},
         )
-        log.debug("Browser started (headless=%s)", config.HEADLESS)
+        log.debug("Fresh browser context created")
+
+    def reset_context(self) -> None:
+        """
+        Drop the current context and open a new one.
+        Call between vehicle searches to clear Carvana session/cookies
+        and reduce bot-detection risk.
+        """
+        self._new_context()
+        log.debug("Browser context reset")
 
     def get_page_content(self, url: str) -> str:
         """
