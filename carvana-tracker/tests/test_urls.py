@@ -19,7 +19,7 @@ def test_base64_decodes_correctly():
     decoded = json.loads(base64.b64decode(encoded).decode())
     filters = decoded["filters"]
     assert filters["makes"][0]["name"] == "Toyota"
-    assert filters["makes"][0]["models"][0]["name"] == "RAV4"
+    assert filters["makes"][0]["parentModels"][0]["name"] == "RAV4"
     assert filters["year"]["min"] == 2021
     assert filters["year"]["max"] == 2025
 
@@ -30,9 +30,23 @@ def test_different_make_model():
     decoded = json.loads(base64.b64decode(encoded).decode())
     filters = decoded["filters"]
     assert filters["makes"][0]["name"] == "Honda"
-    assert filters["makes"][0]["models"][0]["name"] == "CR-V"
+    assert filters["makes"][0]["parentModels"][0]["name"] == "CR-V"
     assert filters["year"]["min"] == 2022
     assert filters["year"]["max"] == 2024
+
+
+def test_fuel_type_filter():
+    url = build_search_url("Toyota", "RAV4", 2021, 2025, fuel_type="Hybrid")
+    encoded = url.split("cvnaid=")[1].split("&")[0]
+    decoded = json.loads(base64.b64decode(encoded).decode())
+    assert decoded["filters"]["fuelTypes"] == ["Hybrid"]
+
+
+def test_no_fuel_type_filter():
+    url = build_search_url("Toyota", "RAV4", 2021, 2025, fuel_type=None)
+    encoded = url.split("cvnaid=")[1].split("&")[0]
+    decoded = json.loads(base64.b64decode(encoded).decode())
+    assert "fuelTypes" not in decoded["filters"]
 
 
 def test_page_1_not_appended():

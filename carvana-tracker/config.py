@@ -17,6 +17,9 @@ MAX_PRICE    = 30000
 MAX_MILEAGE  = 80000
 MIN_YEAR     = 2021
 MAX_YEAR     = 2025
+# Set to "Hybrid" to filter Carvana search results to hybrid vehicles only.
+# Set to None to include all fuel types (gas + hybrid).
+FUEL_TYPE_FILTER: str | None = "Hybrid"
 
 # ── Location ──────────────────────────────────────────────────────────────────
 ZIP_CODE = "85286"   # Phoenix, AZ — used by Carvana for shipping estimates

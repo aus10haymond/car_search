@@ -71,6 +71,8 @@ def run_once(
 
         # ── Phase 1: Scrape ───────────────────────────────────────────────────
         log.info("--- PHASE 1: SCRAPING ---")
+        if config.FUEL_TYPE_FILTER:
+            log.info("Fuel type filter: %s", config.FUEL_TYPE_FILTER)
         all_raw, vehicle_stats = _scrape(run_id)
 
         _log_scrape_summary(vehicle_stats, all_raw)
@@ -173,7 +175,7 @@ def _scrape(run_id: str) -> tuple[list[dict], list[dict]]:
             t0 = time.monotonic()
 
             for page in range(1, config.MAX_PAGES_PER_SEARCH + 1):
-                url = build_search_url(make, model, min_year, max_year, page)
+                url = build_search_url(make, model, min_year, max_year, page, fuel_type=config.FUEL_TYPE_FILTER)
                 log.info("Scraping %s %s (page %d)...", make, model, page)
                 log.debug("URL: %s", url)
 

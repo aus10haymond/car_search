@@ -14,6 +14,7 @@ def build_search_url(
     min_year: int,
     max_year: int,
     page: int = 1,
+    fuel_type: str | None = None,
 ) -> str:
     """
     Returns a Carvana search URL with base64-encoded filter params.
@@ -21,20 +22,23 @@ def build_search_url(
     Example output:
       https://www.carvana.com/cars/filters?cvnaid=<base64>&page=2
 
-    Filter JSON shape:
+    Filter JSON shape (matches Carvana's own URL format):
     {
       "filters": {
-        "makes": [{"name": "Toyota", "models": [{"name": "RAV4"}]}],
+        "fuelTypes": ["Hybrid"],          # optional
+        "makes": [{"name": "Toyota", "parentModels": [{"name": "RAV4"}]}],
         "year": {"min": 2021, "max": 2025}
       }
     }
     """
-    filters = {
-        "filters": {
-            "makes": [{"name": make, "models": [{"name": model}]}],
-            "year": {"min": min_year, "max": max_year},
-        }
+    inner: dict = {
+        "makes": [{"name": make, "parentModels": [{"name": model}]}],
+        "year": {"min": min_year, "max": max_year},
     }
+    if fuel_type:
+        inner["fuelTypes"] = [fuel_type]
+
+    filters = {"filters": inner}
     encoded = base64.b64encode(
         json.dumps(filters, separators=(",", ":")).encode()
     ).decode()
