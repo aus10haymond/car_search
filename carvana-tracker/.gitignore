@@ -5,3 +5,4 @@ __pycache__/
 *.pyo
 .pytest_cache/
 scrape_one.py
+debug_page.html
