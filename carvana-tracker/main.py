@@ -4,9 +4,13 @@ Carvana SUV Tracker — entry point.
 Usage:
     python main.py                   # Run once immediately
     python main.py --once            # Explicit single run (same as no args)
+    python main.py --schedule        # Run now, then repeat every CHECK_INTERVAL_HOURS
+    python main.py --dry-run         # Scrape and analyse but do not save or email
     python main.py --no-llm          # Skip LLM analysis (rules only)
     python main.py --backend ollama  # Force Ollama, no fallback
     python main.py --backend api     # Force Anthropic API, no Ollama
+    python main.py --email           # Force email send this run
+    python main.py --history         # Print run history from DB and exit
     python main.py --check-setup     # Validate config, test backends, exit
 """
 
@@ -32,13 +36,19 @@ from analysis.rules import apply_filters, enrich_listings
 from analysis.llm import LLMAnalyzer, LLMResult
 from storage.csv_writer import write_results
 from storage import history_db
+from notifications.email_alert import send_summary, should_send
 
 log = logging.getLogger(__name__)
 
 
 # ── Main run cycle ────────────────────────────────────────────────────────────
 
-def run_once(skip_llm: bool = False, force_backend: str | None = None) -> list[dict]:
+def run_once(
+    skip_llm:      bool = False,
+    force_backend: str | None = None,
+    dry_run:       bool = False,
+    force_email:   bool = False,
+) -> list[dict]:
     """Execute one full search-and-save cycle. Returns enriched listings."""
     start_time = time.monotonic()
     run_id     = str(uuid.uuid4())
@@ -47,6 +57,8 @@ def run_once(skip_llm: bool = False, force_backend: str | None = None) -> list[d
     log.info("=" * 60)
     log.info("Carvana Tracker run started — %s", datetime.now().strftime("%b %d %Y %I:%M %p"))
     log.info("Run ID: %s", run_id)
+    if dry_run:
+        log.info("DRY RUN — nothing will be saved or emailed")
     log.info("=" * 60)
 
     # ── 1-4. Scrape, dedup, filter, enrich ───────────────────────────────────
@@ -57,11 +69,22 @@ def run_once(skip_llm: bool = False, force_backend: str | None = None) -> list[d
     # ── 5. LLM analysis ───────────────────────────────────────────────────────
     llm_result = _run_llm(enriched, skip_llm, force_backend)
 
+    if dry_run:
+        _print_summary(enriched)
+        _print_llm_result(llm_result)
+        log.info("Dry run complete — no data saved.")
+        return enriched
+
     # ── 6. Save to CSV ────────────────────────────────────────────────────────
     write_results(enriched, run_id, llm_backend=llm_result.backend_used)
 
     # ── 7. Save to DB ─────────────────────────────────────────────────────────
     history_db.init_db()
+
+    # Detect new VINs before saving this run's listings
+    current_vins = {r.get("vin") for r in enriched if r.get("vin")}
+    new_vins     = history_db.get_new_listings(current_vins)
+
     duration = time.monotonic() - start_time
     history_db.save_run(history_db.RunRecord(
         run_id=run_id,
@@ -74,8 +97,11 @@ def run_once(skip_llm: bool = False, force_backend: str | None = None) -> list[d
     ))
     history_db.save_listings(enriched, run_id)
 
-    # ── 8. Price drops ────────────────────────────────────────────────────────
+    # ── 8. Price drops + new listing detection ────────────────────────────────
     price_drops = history_db.get_price_drops(enriched)
+
+    if new_vins:
+        log.info("%d new listing(s) detected this run", len(new_vins))
     if price_drops:
         log.info("%d price drop(s) detected (>=5%%):", len(price_drops))
         for drop in price_drops:
@@ -88,6 +114,10 @@ def run_once(skip_llm: bool = False, force_backend: str | None = None) -> list[d
     # ── 9. Print summary + LLM output ────────────────────────────────────────
     _print_summary(enriched)
     _print_llm_result(llm_result)
+
+    # ── 10. Email ─────────────────────────────────────────────────────────────
+    if force_email or (config.SEND_EMAIL and should_send(enriched, new_vins, price_drops)):
+        send_summary(enriched, llm_result, new_vins, price_drops, force=force_email)
 
     log.info(
         "Run complete in %.1fs — %d listings | LLM backend: %s",
@@ -118,7 +148,6 @@ def _scrape_filter_enrich() -> list[dict]:
 
     log.info("Total raw listings scraped: %d", len(all_raw))
 
-    # Deduplicate by VIN
     seen: set[str] = set()
     deduped = []
     for listing in all_raw:
@@ -150,7 +179,6 @@ def _run_llm(
         return LLMResult(analysis=None, backend_used="none", model_used="",
                          tokens_used=None, latency_ms=0, error="skipped via --no-llm")
 
-    # Apply backend override
     original_ollama    = config.OLLAMA_ENABLED
     original_anthropic = config.ANTHROPIC_ENABLED
     if force_backend == "ollama":
@@ -161,8 +189,7 @@ def _run_llm(
         log.info("Backend forced to Anthropic API only")
 
     try:
-        analyzer = LLMAnalyzer()
-        result   = analyzer.analyze(listings)
+        result = LLMAnalyzer().analyze(listings)
     finally:
         config.OLLAMA_ENABLED    = original_ollama
         config.ANTHROPIC_ENABLED = original_anthropic
@@ -173,18 +200,15 @@ def _run_llm(
 # ── --check-setup ─────────────────────────────────────────────────────────────
 
 def check_setup() -> None:
-    """Validate config, test Ollama, test Anthropic API key, and exit."""
     print("\n=== Carvana Tracker — Setup Check ===\n")
 
-    # Config
     print(f"  Vehicles:      {len(config.VEHICLES)} configured")
     print(f"  Max price:     ${config.MAX_PRICE:,}")
     print(f"  Max mileage:   {config.MAX_MILEAGE:,} mi")
-    print(f"  Year range:    {config.MIN_YEAR}–{config.MAX_YEAR}")
+    print(f"  Year range:    {config.MIN_YEAR}-{config.MAX_YEAR}")
     print(f"  Output dir:    {config.OUTPUT_DIR}")
     print()
 
-    # Ollama
     from analysis.ollama_client import OllamaClient
     ollama = OllamaClient(config.OLLAMA_BASE_URL, config.OLLAMA_MODEL, timeout=5)
     if ollama.is_available():
@@ -192,7 +216,6 @@ def check_setup() -> None:
     else:
         print(f"  [--] Ollama: NOT available at {config.OLLAMA_BASE_URL} (model: {config.OLLAMA_MODEL})")
 
-    # Anthropic API
     from analysis.anthropic_client import AnthropicClient, AnthropicUnavailableError
     anthropic = AnthropicClient(config.ANTHROPIC_API_KEY, config.ANTHROPIC_MODEL, max_tokens=10)
     if not anthropic.is_configured():
@@ -202,17 +225,54 @@ def check_setup() -> None:
             anthropic.analyze("Reply with only the word OK.")
             print(f"  [OK] Anthropic API: key valid, model '{config.ANTHROPIC_MODEL}' reachable")
         except AnthropicUnavailableError as exc:
-            print(f"  [!!] Anthropic API: key present but request failed — {exc}")
+            print(f"  [!!] Anthropic API: key present but request failed -- {exc}")
 
-    # Email
-    if config.SEND_EMAIL:
-        if config.EMAIL_FROM and config.EMAIL_TO and config.EMAIL_PASSWORD:
-            print("  [OK] Email: configured")
-        else:
-            print("  [!!] Email: SEND_EMAIL=True but credentials incomplete")
+    if config.MAILJET_API_KEY and config.MAILJET_SECRET_KEY:
+        print(f"  [OK] Mailjet: API key configured")
     else:
-        print("  [--] Email: disabled (SEND_EMAIL=False)")
+        print("  [--] Mailjet: not configured (MAILJET_API_KEY / MAILJET_SECRET_KEY in .env)")
 
+    if config.SEND_EMAIL:
+        if config.EMAIL_FROM and config.EMAIL_TO and config.MAILJET_API_KEY:
+            print(f"  [OK] Email: enabled, {len(config.EMAIL_TO)} recipient(s)")
+        else:
+            print("  [!!] Email: SEND_EMAIL=True but configuration incomplete")
+    else:
+        to_list = ", ".join(config.EMAIL_TO) if config.EMAIL_TO else "none"
+        print(f"  [--] Email: disabled (SEND_EMAIL=False) — recipients: {to_list}")
+
+    print()
+
+
+# ── --history ─────────────────────────────────────────────────────────────────
+
+def print_history() -> None:
+    history_db.init_db()
+    runs = history_db.get_history_summary()
+    if not runs:
+        print("No run history found.")
+        return
+
+    try:
+        from tabulate import tabulate
+        rows = [
+            [
+                r["run_at"][:19],
+                r["listings_saved"],
+                r["llm_backend"],
+                r["llm_model"] or "-",
+                f"{r['duration_seconds']:.1f}s",
+            ]
+            for r in runs
+        ]
+        print("\n" + tabulate(
+            rows,
+            headers=["Run At (UTC)", "Listings", "LLM Backend", "Model", "Duration"],
+            tablefmt="rounded_outline",
+        ))
+    except ImportError:
+        for r in runs:
+            print(f"  {r['run_at'][:19]} | {r['listings_saved']} listings | {r['llm_backend']}")
     print()
 
 
@@ -274,8 +334,12 @@ def _print_llm_result(result: LLMResult) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Carvana SUV Tracker")
     parser.add_argument("--once",        action="store_true", help="Run once (default)")
+    parser.add_argument("--schedule",    action="store_true", help="Run on a repeating schedule")
+    parser.add_argument("--dry-run",     action="store_true", help="Scrape and analyse but do not save or email")
     parser.add_argument("--no-llm",      action="store_true", help="Skip LLM analysis")
     parser.add_argument("--backend",     choices=["ollama", "api"], help="Force a specific LLM backend")
+    parser.add_argument("--email",       action="store_true", help="Force email send this run")
+    parser.add_argument("--history",     action="store_true", help="Print run history and exit")
     parser.add_argument("--check-setup", action="store_true", help="Validate config and test backends")
     args = parser.parse_args()
 
@@ -285,7 +349,45 @@ def main() -> None:
         check_setup()
         return
 
-    run_once(skip_llm=args.no_llm, force_backend=args.backend)
+    if args.history:
+        print_history()
+        return
+
+    kwargs = dict(
+        skip_llm=args.no_llm,
+        force_backend=args.backend,
+        dry_run=args.dry_run,
+        force_email=args.email,
+    )
+
+    if args.schedule:
+        try:
+            import schedule as sched
+        except ImportError:
+            log.error("Install schedule: pip install schedule")
+            return
+
+        interval = config.CHECK_INTERVAL_HOURS
+        log.info("Scheduled mode: running every %d hours. Press Ctrl+C to stop.", interval)
+
+        run_once(**kwargs)
+        sched.every(interval).hours.do(run_once, **kwargs)
+
+        heartbeat_counter = 0
+        try:
+            while True:
+                sched.run_pending()
+                time.sleep(60)
+                heartbeat_counter += 1
+                if heartbeat_counter >= 30:
+                    log.info("Heartbeat — tracker is running, next run in ~%s",
+                             sched.next_run())
+                    heartbeat_counter = 0
+        except KeyboardInterrupt:
+            log.info("Shutting down.")
+            sys.exit(0)
+    else:
+        run_once(**kwargs)
 
 
 if __name__ == "__main__":

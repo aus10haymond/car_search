@@ -9,7 +9,7 @@ VEHICLES = [
     ("Honda",  "CR-V",     2021, 2025),
     ("Toyota", "RAV4",     2021, 2025),
     ("Subaru", "Forester", 2021, 2025),
-    ("Kia",    "Sportage", 2021, 2025),
+    ("Kia",    "Sportage", 2023, 2025),
 ]
 
 # ── Filters ───────────────────────────────────────────────────────────────────
@@ -19,7 +19,7 @@ MIN_YEAR     = 2021
 MAX_YEAR     = 2025
 
 # ── Location ──────────────────────────────────────────────────────────────────
-ZIP_CODE = "85001"   # Phoenix, AZ — used by Carvana for shipping estimates
+ZIP_CODE = "85286"   # Phoenix, AZ — used by Carvana for shipping estimates
 
 # ── Payment calculator ────────────────────────────────────────────────────────
 DOWN_PAYMENT     = 3000    # dollars
@@ -38,7 +38,8 @@ LOG_FILE   = "./carvana_results/tracker.log"
 # Primary: local Ollama
 OLLAMA_ENABLED  = True
 OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL    = "llama3.1:8b"
+#OLLAMA_MODEL    = "llama3.1:8b"
+OLLAMA_MODEL    = "gemma3:4b"
 OLLAMA_TIMEOUT  = 120               # seconds
 
 # Fallback: Anthropic API
@@ -51,12 +52,14 @@ ANTHROPIC_MAX_TOKENS = 1500
 ALERT_PRICE_THRESHOLD = 32000
 ALERT_HYBRID_ONLY     = False
 
-# ── Email (optional) ──────────────────────────────────────────────────────────
-SEND_EMAIL     = False
-EMAIL_FROM     = os.getenv("EMAIL_FROM", "")
+# ── Email — Mailjet (optional) ────────────────────────────────────────────────
+SEND_EMAIL          = False
+EMAIL_FROM          = os.getenv("EMAIL_FROM", "")           # Verified sender address
+EMAIL_FROM_NAME     = os.getenv("EMAIL_FROM_NAME", "Carvana Tracker")
 # Comma-separated list of recipient addresses, e.g. "a@gmail.com,b@gmail.com"
-EMAIL_TO       = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")  # Gmail App Password
+EMAIL_TO            = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
+MAILJET_API_KEY     = os.getenv("MAILJET_API_KEY", "")
+MAILJET_SECRET_KEY  = os.getenv("MAILJET_SECRET_KEY", "")
 
 # ── Scraping behaviour ────────────────────────────────────────────────────────
 HEADLESS              = True
