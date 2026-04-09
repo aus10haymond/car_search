@@ -28,6 +28,19 @@ class RunRecord:
 # ── Schema ────────────────────────────────────────────────────────────────────
 
 _DDL = """
+CREATE TABLE IF NOT EXISTS model_price_stats (
+    run_id     TEXT NOT NULL,
+    run_at     TEXT NOT NULL,
+    make       TEXT NOT NULL,
+    model      TEXT NOT NULL,
+    avg_price  REAL,
+    med_price  REAL,
+    min_price  REAL,
+    max_price  REAL,
+    count      INTEGER,
+    PRIMARY KEY (run_id, make, model)
+);
+
 CREATE TABLE IF NOT EXISTS runs (
     run_id           TEXT PRIMARY KEY,
     run_at           TEXT NOT NULL,
@@ -204,6 +217,73 @@ def get_price_drops(listings: list[dict], threshold_pct: float = 5.0) -> list[di
     return drops
 
 
+def save_model_stats(listings: list[dict], run_id: str) -> None:
+    """
+    Compute and store per-model aggregate price stats for this run.
+    Groups by (make, model) regardless of trim or year.
+    """
+    run_at = _get_run_at(run_id)
+    groups: dict[tuple, list[float]] = {}
+    for listing in listings:
+        key   = (listing.get("make", ""), listing.get("model", ""))
+        price = listing.get("price")
+        if price:
+            groups.setdefault(key, []).append(price)
+
+    rows = []
+    for (make, model), prices in groups.items():
+        sorted_p = sorted(prices)
+        n        = len(sorted_p)
+        median   = (sorted_p[n // 2 - 1] + sorted_p[n // 2]) / 2 if n % 2 == 0 else sorted_p[n // 2]
+        rows.append((
+            run_id, run_at, make, model,
+            round(sum(prices) / n, 2),
+            round(median, 2),
+            round(min(prices), 2),
+            round(max(prices), 2),
+            n,
+        ))
+
+    with _connect() as conn:
+        conn.executemany(
+            """INSERT OR REPLACE INTO model_price_stats
+               (run_id, run_at, make, model, avg_price, med_price, min_price, max_price, count)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            rows,
+        )
+    log.debug("Saved model price stats for %d groups (run %s)", len(rows), run_id)
+
+
+def get_model_price_trends(days: int = 60) -> dict[str, list[dict]]:
+    """
+    Return price trend data for each make/model over the past `days` days.
+
+    Returns a dict keyed by "Make Model" with a list of dicts:
+        [{"date": "Apr 08", "avg": 30500, "min": 27990}, ...]
+    Ordered oldest-first so charts render left-to-right.
+    """
+    cutoff = _days_ago_iso(days)
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT make, model, run_at, avg_price, min_price
+               FROM model_price_stats
+               WHERE run_at >= ?
+               ORDER BY make, model, run_at""",
+            (cutoff,),
+        ).fetchall()
+
+    trends: dict[str, list[dict]] = {}
+    for row in rows:
+        key  = f"{row['make']} {row['model']}"
+        date = _format_date(row["run_at"])
+        trends.setdefault(key, []).append({
+            "date":    date,
+            "avg":     row["avg_price"],
+            "min":     row["min_price"],
+        })
+    return trends
+
+
 def get_history_summary() -> list[dict]:
     """Return all runs ordered by date descending."""
     with _connect() as conn:
@@ -212,6 +292,20 @@ def get_history_summary() -> list[dict]:
 
 
 # ── Internal ──────────────────────────────────────────────────────────────────
+
+def _days_ago_iso(days: int) -> str:
+    from datetime import datetime, timezone, timedelta
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+def _format_date(iso: str) -> str:
+    """Convert ISO timestamp to short label like 'Apr 08'."""
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).strftime("%b %d")
+    except Exception:
+        return iso[:10]
+
 
 def _get_run_at(run_id: str) -> str:
     with _connect() as conn:

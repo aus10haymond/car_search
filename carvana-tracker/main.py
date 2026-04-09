@@ -36,6 +36,7 @@ from analysis.rules import apply_filters, enrich_listings
 from analysis.llm import LLMAnalyzer, LLMResult
 from storage.csv_writer import write_results
 from storage import history_db
+from storage.trends import build_trend_charts_html
 from notifications.email_alert import send_summary, should_send
 
 log = logging.getLogger(__name__)
@@ -116,6 +117,7 @@ def run_once(
             duration_seconds=round(duration, 2),
         ))
         history_db.save_listings(enriched, run_id)
+        history_db.save_model_stats(enriched, run_id)
         log.info("Saved %d listings to DB (run_id=%s)", len(enriched), run_id)
 
         # ── Phase 7: Alerts ───────────────────────────────────────────────────
@@ -127,10 +129,14 @@ def run_once(
         _print_summary(enriched)
         _print_llm_result(llm_result)
 
+        trends = history_db.get_model_price_trends(days=60)
+        log.info("Price trend data: %d models, up to 60 days", len(trends))
+
         if no_email:
             log.info("Email skipped (--no-email)")
         elif force_email or (config.SEND_EMAIL and should_send(enriched, new_vins, price_drops)):
-            sent = send_summary(enriched, llm_result, new_vins, price_drops, force=force_email)
+            sent = send_summary(enriched, llm_result, new_vins, price_drops,
+                                trends=trends, force=force_email)
             log.info("Email dispatch: %s", "sent" if sent else "failed")
         else:
             log.info("Email skipped (no alert conditions met or SEND_EMAIL=False)")

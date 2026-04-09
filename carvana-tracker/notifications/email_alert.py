@@ -12,6 +12,7 @@ import requests
 
 import config
 from analysis.llm import LLMResult
+from storage.trends import build_trend_charts_html
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ def send_summary(
     llm_result: LLMResult,
     new_vins: set[str],
     price_drops: list[dict],
+    trends: dict | None = None,
     force: bool = False,
 ) -> bool:
     """
@@ -62,7 +64,7 @@ def send_summary(
 
     alerts = _collect_alerts(listings, new_vins, price_drops)
     subject = _build_subject(listings, alerts)
-    html    = _build_html(listings, llm_result, alerts, price_drops)
+    html    = _build_html(listings, llm_result, alerts, price_drops, trends or {})
 
     recipients = [{"Email": addr} for addr in config.EMAIL_TO]
 
@@ -149,6 +151,7 @@ def _build_html(
     llm_result: LLMResult,
     alerts: list[dict],
     price_drops: list[dict],
+    trends: dict,
 ) -> str:
     run_time = datetime.now().strftime("%b %d, %Y %I:%M %p")
     top20    = listings[:20]
@@ -212,6 +215,11 @@ def _build_html(
             f"</tr>"
         )
     parts.append("</table>")
+
+    # Price trend charts
+    trend_html = build_trend_charts_html(trends)
+    if trend_html:
+        parts.append(trend_html)
 
     # LLM analysis
     if llm_result.analysis:
