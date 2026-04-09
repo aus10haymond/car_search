@@ -408,31 +408,80 @@ def check_setup() -> None:
 
 def print_history() -> None:
     history_db.init_db()
-    runs = history_db.get_history_summary()
+    runs  = history_db.get_history_summary()
+    stats = history_db.get_all_time_stats()
+
     if not runs:
         print("No run history found.")
         return
 
     try:
         from tabulate import tabulate
-        rows = [
-            [
-                r["run_at"][:19],
-                r["listings_saved"],
-                r["llm_backend"],
-                r["llm_model"] or "-",
-                f"{r['duration_seconds']:.1f}s",
-            ]
-            for r in runs
+        use_tabulate = True
+    except ImportError:
+        use_tabulate = False
+
+    # ── Section 1: Run log ────────────────────────────────────────────────────
+    print("\n" + "=" * 62)
+    print("  RUN HISTORY")
+    print("=" * 62)
+    run_rows = [
+        [
+            r["run_at"][:19].replace("T", " "),
+            r["listings_saved"],
+            r["llm_backend"] or "-",
+            (r["llm_model"] or "-")[:28],
+            f"{r['duration_seconds']:.0f}s",
         ]
-        print("\n" + tabulate(
-            rows,
+        for r in runs
+    ]
+    if use_tabulate:
+        print(tabulate(
+            run_rows,
             headers=["Run At (UTC)", "Listings", "LLM Backend", "Model", "Duration"],
             tablefmt="rounded_outline",
         ))
-    except ImportError:
-        for r in runs:
-            print(f"  {r['run_at'][:19]} | {r['listings_saved']} listings | {r['llm_backend']}")
+    else:
+        for row in run_rows:
+            print("  " + " | ".join(str(c) for c in row))
+
+    # ── Section 2: Per-model latest prices ────────────────────────────────────
+    print("\n" + "=" * 62)
+    print("  LATEST PRICES BY MODEL  (from most recent run per model)")
+    print("=" * 62)
+    model_rows = [
+        [
+            f"{r['make']} {r['model']}",
+            f"${r['avg_price']:,.0f}",
+            f"${r['min_price']:,.0f}",
+            r["count"],
+            r["run_at"][:10],
+        ]
+        for r in stats["model_latest"]
+    ]
+    if use_tabulate:
+        print(tabulate(
+            model_rows,
+            headers=["Model", "Avg Price", "Best Price", "# Listings", "As Of"],
+            tablefmt="rounded_outline",
+        ))
+    else:
+        for row in model_rows:
+            print("  " + " | ".join(str(c) for c in row))
+
+    # ── Section 3: All-time summary ───────────────────────────────────────────
+    print("\n" + "=" * 62)
+    print("  ALL-TIME SUMMARY")
+    print("=" * 62)
+    print(f"  Total runs tracked : {stats['total_runs']}")
+    print(f"  Unique VINs seen   : {stats['total_unique_vins']}")
+    if stats["cheapest"]:
+        c = stats["cheapest"]
+        print(
+            f"  Cheapest ever      : ${c['price']:,.0f} — "
+            f"{c['year']} {c['make']} {c['model']} {c['trim'] or ''} "
+            f"(seen {c['run_at'][:10]})"
+        )
     print()
 
 

@@ -291,6 +291,53 @@ def get_history_summary() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_all_time_stats() -> dict:
+    """
+    Return aggregate stats across all runs for the --history display:
+      - total_runs, total_unique_vins
+      - per-model: latest avg/min price, number of runs tracked
+      - all-time cheapest listing (vin, year, make, model, trim, price, run_at)
+    """
+    with _connect() as conn:
+        total_runs = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+        total_vins = conn.execute(
+            "SELECT COUNT(DISTINCT vin) FROM listings WHERE vin != ''"
+        ).fetchone()[0]
+
+        # Latest avg + min per model (most recent run_at per make/model)
+        model_rows = conn.execute(
+            """
+            SELECT make, model, avg_price, min_price, count, run_at
+            FROM model_price_stats
+            WHERE (make, model, run_at) IN (
+                SELECT make, model, MAX(run_at)
+                FROM model_price_stats
+                GROUP BY make, model
+            )
+            ORDER BY make, model
+            """
+        ).fetchall()
+
+        # All-time cheapest listing with a VIN
+        cheapest = conn.execute(
+            """
+            SELECT l.year, l.make, l.model, l.trim, l.price, r.run_at
+            FROM listings l
+            JOIN runs r ON l.run_id = r.run_id
+            WHERE l.price IS NOT NULL AND l.price > 0
+            ORDER BY l.price ASC
+            LIMIT 1
+            """
+        ).fetchone()
+
+    return {
+        "total_runs":       total_runs,
+        "total_unique_vins": total_vins,
+        "model_latest":     [dict(r) for r in model_rows],
+        "cheapest":         dict(cheapest) if cheapest else None,
+    }
+
+
 # ── Internal ──────────────────────────────────────────────────────────────────
 
 def _days_ago_iso(days: int) -> str:
