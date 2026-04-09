@@ -70,13 +70,20 @@ class OllamaClient:
         thread = threading.Thread(target=_send, daemon=True, name="ollama-warmup")
         thread.start()
 
-    def analyze(self, prompt: str) -> str:
+    def analyze(self, prompt: str, reference_doc: str = "") -> str:
         """
         POST to {base_url}/api/generate with stream=False.
         Returns the response text.
         Raises OllamaUnavailableError on connection failure or timeout.
         Raises OllamaModelError if model not found (HTTP 404).
+
+        If reference_doc is non-empty it is prepended to the prompt under a
+        [REFERENCE DOCUMENT] / [TASK] structure so the model has vehicle
+        knowledge context before seeing the listings data.
         """
+        if reference_doc:
+            prompt = f"[REFERENCE DOCUMENT]\n{reference_doc}\n\n[TASK]\n{prompt}"
+
         payload = {
             "model":  self.model,
             "prompt": prompt,

@@ -22,6 +22,17 @@ _HYBRID_KEYWORDS = {"hybrid", "hev", "phev", "prime"}
 _SCORE_MIN_YEAR = 2021
 _SCORE_MAX_YEAR = 2025
 
+# Model preference order (best → worst). Used for sorting and score bonus.
+MODEL_PREFERENCE_ORDER = ["CR-V", "RAV4", "Forester", "Sportage"]
+
+# Bonus points added to value_score for each model (spread = 6 pts).
+_MODEL_PREFERENCE_BONUS: dict[str, float] = {
+    "CR-V":     6.0,
+    "RAV4":     4.0,
+    "Forester": 2.0,
+    "Sportage": 0.0,
+}
+
 
 # ── Filtering ─────────────────────────────────────────────────────────────────
 
@@ -138,12 +149,13 @@ def _value_score(
     """
     Produce a 0–100 score. Higher is better.
 
-    Components (weights sum to 100):
+    Components (base weights sum to 100, plus model preference bonus):
       35 — price vs group average (same make/model/year)
       25 — mileage (inverse linear, 0→25pts, 80k→0pts)
       20 — age (newer = better, MAX_YEAR→20pts, MIN_YEAR→0pts)
       10 — hybrid bonus
       10 — shipping penalty (0/None→10pts, $1500+→0pts)
+       6 — model preference bonus (CR-V=6, RAV4=4, Forester=2, Sportage=0)
     """
     price    = listing.get("price") or 0.0
     mileage  = listing.get("mileage")
@@ -185,7 +197,10 @@ def _value_score(
     else:
         shipping_score = max(0.0, 10.0 * (1 - shipping / 1500))
 
-    total = price_score + mileage_score + age_score + hybrid_score + shipping_score
+    # ── Model preference bonus (up to 6 pts) ─────────────────────────────────
+    model_score = _MODEL_PREFERENCE_BONUS.get(listing.get("model") or "", 0.0)
+
+    total = price_score + mileage_score + age_score + hybrid_score + shipping_score + model_score
     return round(min(100.0, max(0.0, total)), 2)
 
 

@@ -42,6 +42,8 @@ DB_PATH    = "./carvana_results/history.db"
 LOG_FILE   = "./carvana_results/tracker.log"
 
 # ── AI analysis ───────────────────────────────────────────────────────────────
+REFERENCE_DOC_PATH = "./SUV_REFERENCE_CONTEXT.md"
+
 # Primary: Anthropic API
 ANTHROPIC_ENABLED    = True
 ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY", "")

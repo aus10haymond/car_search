@@ -17,12 +17,13 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class LLMResult:
-    analysis:     str | None   # The LLM's text output, or None if unavailable
-    backend_used: str          # "ollama" | "anthropic_api" | "none"
-    model_used:   str          # Specific model string e.g. "llama3.1:8b"
-    tokens_used:  int | None   # None for Ollama (not always available)
-    latency_ms:   int          # Wall-clock time for the LLM call
-    error:        str | None   # Error message if backend failed, else None
+    analysis:     str | None        # The LLM's text output, or None if unavailable
+    backend_used: str               # "ollama" | "anthropic_api" | "none"
+    model_used:   str               # Specific model string e.g. "llama3.1:8b"
+    tokens_used:  int | None        # None for Ollama (not always available)
+    latency_ms:   int               # Wall-clock time for the LLM call
+    error:        str | None        # Error message if backend failed, else None
+    cache_hit:    bool | None = None  # True/False if Anthropic cache was checked; None otherwise
 
 
 class LLMAnalyzer:
@@ -38,6 +39,18 @@ class LLMAnalyzer:
             max_tokens=config.ANTHROPIC_MAX_TOKENS,
         )
         self.backend_used: str | None = None
+
+        # Load the reference doc once at startup; pass to each backend call.
+        self._reference_doc: str = ""
+        try:
+            with open(config.REFERENCE_DOC_PATH, encoding="utf-8") as f:
+                self._reference_doc = f.read().strip()
+            if self._reference_doc:
+                log.info("Loaded reference doc from %s (%d chars)", config.REFERENCE_DOC_PATH, len(self._reference_doc))
+            else:
+                log.debug("Reference doc at %s is empty — skipping", config.REFERENCE_DOC_PATH)
+        except FileNotFoundError:
+            log.debug("No reference doc found at %s — proceeding without it", config.REFERENCE_DOC_PATH)
 
     def analyze(self, listings: list[dict]) -> LLMResult:
         """
@@ -65,9 +78,12 @@ class LLMAnalyzer:
             if self.anthropic.is_configured():
                 t0 = time.monotonic()
                 try:
-                    text = self.anthropic.analyze(prompt)
+                    text, cache_hit = self.anthropic.analyze(prompt, reference_doc=self._reference_doc)
                     latency = int((time.monotonic() - t0) * 1000)
-                    log.info("LLM analysis complete via Anthropic API (%dms)", latency)
+                    log.info(
+                        "LLM analysis complete via Anthropic API (%dms, cache_hit=%s)",
+                        latency, cache_hit,
+                    )
                     self.backend_used = "anthropic_api"
                     return LLMResult(
                         analysis=text,
@@ -76,6 +92,7 @@ class LLMAnalyzer:
                         tokens_used=None,
                         latency_ms=latency,
                         error=None,
+                        cache_hit=cache_hit,
                     )
                 except AnthropicUnavailableError as exc:
                     log.warning("Anthropic API failed: %s — falling back to Ollama", exc)
@@ -89,7 +106,7 @@ class LLMAnalyzer:
             if self.ollama.is_available():
                 t0 = time.monotonic()
                 try:
-                    text = self.ollama.analyze(prompt)
+                    text = self.ollama.analyze(prompt, reference_doc=self._reference_doc)
                     latency = int((time.monotonic() - t0) * 1000)
                     log.info("LLM analysis complete via Ollama (%dms)", latency)
                     self.backend_used = "ollama"

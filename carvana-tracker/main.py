@@ -32,7 +32,7 @@ from utils.logging_config import setup_logging, start_run_log, end_run_log
 from scraper.urls import build_search_url
 from scraper.browser import Browser
 from scraper.extractor import extract_listings
-from analysis.rules import apply_filters, enrich_listings
+from analysis.rules import apply_filters, enrich_listings, MODEL_PREFERENCE_ORDER
 from analysis.llm import LLMAnalyzer, LLMResult
 from storage.csv_writer import write_results
 from storage import history_db
@@ -91,10 +91,13 @@ def run_once(
         # ── Phase 4: Enrich + score ───────────────────────────────────────────
         log.info("--- PHASE 4: ENRICHMENT & SCORING ---")
         enriched = enrich_listings(filtered)
-        # Hybrids first, then by value score descending within each group
-        enriched.sort(
-            key=lambda x: (0 if x.get("is_hybrid") else 1, -(x.get("value_score") or 0))
-        )
+        # Model preference order first (CR-V, RAV4, Forester, Sportage),
+        # then by value score descending within each group.
+        _n = len(MODEL_PREFERENCE_ORDER)
+        enriched.sort(key=lambda x: (
+            MODEL_PREFERENCE_ORDER.index(x["model"]) if x.get("model") in MODEL_PREFERENCE_ORDER else _n,
+            -(x.get("value_score") or 0),
+        ))
         _log_enrichment_summary(enriched)
 
         # ── Phase 5: LLM analysis ─────────────────────────────────────────────

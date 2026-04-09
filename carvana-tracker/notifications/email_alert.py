@@ -190,7 +190,7 @@ def _build_html(
         parts.append("</ul>")
 
     # Results table
-    parts.append("<h3>Top 20 Listings by Value Score</h3>")
+    parts.append("<h3>Top 20 Listings (CR-V &rsaquo; RAV4 &rsaquo; Forester &rsaquo; Sportage, then by Value Score)</h3>")
     parts.append(
         "<table border='1' cellpadding='6' cellspacing='0' "
         "style='border-collapse:collapse;font-size:13px;width:100%'>"
