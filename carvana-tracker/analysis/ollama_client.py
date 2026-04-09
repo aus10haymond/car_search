@@ -3,6 +3,7 @@ Ollama local LLM client.
 """
 
 import logging
+import threading
 import time
 
 import requests
@@ -42,6 +43,32 @@ class OllamaClient:
         except Exception as exc:
             log.debug("Ollama is_available check failed: %s", exc)
             return False
+
+    def warmup(self) -> None:
+        """
+        Fire a trivial request to load the model into RAM without blocking the caller.
+        Intended to be called at run start so the model is warm by the time
+        real analysis begins.  Errors are silently logged — warmup failure is not fatal.
+        """
+        if not self.is_available():
+            log.debug("Ollama warmup skipped — server not available")
+            return
+
+        def _send() -> None:
+            try:
+                log.info("Ollama warmup: loading %s into RAM…", self.model)
+                resp = requests.post(
+                    f"{self.base_url}/api/generate",
+                    json={"model": self.model, "prompt": "Hi", "stream": False},
+                    timeout=self.timeout,
+                )
+                resp.raise_for_status()
+                log.info("Ollama warmup complete (%s ready)", self.model)
+            except Exception as exc:
+                log.debug("Ollama warmup failed (non-fatal): %s", exc)
+
+        thread = threading.Thread(target=_send, daemon=True, name="ollama-warmup")
+        thread.start()
 
     def analyze(self, prompt: str) -> str:
         """

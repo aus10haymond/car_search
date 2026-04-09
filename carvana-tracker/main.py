@@ -63,6 +63,11 @@ def run_once(
     _log_run_header(run_id, run_at, dry_run)
 
     try:
+        # ── Ollama pre-warm (non-blocking) ────────────────────────────────────
+        if config.OLLAMA_ENABLED:
+            from analysis.ollama_client import OllamaClient
+            OllamaClient(config.OLLAMA_BASE_URL, config.OLLAMA_MODEL, config.OLLAMA_TIMEOUT).warmup()
+
         # ── Phase 1: Scrape ───────────────────────────────────────────────────
         log.info("--- PHASE 1: SCRAPING ---")
         all_raw, vehicle_stats = _scrape(run_id)
