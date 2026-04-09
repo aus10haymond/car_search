@@ -48,6 +48,7 @@ def run_once(
     force_backend: str | None = None,
     dry_run:       bool = False,
     force_email:   bool = False,
+    no_email:      bool = False,
 ) -> list[dict]:
     """Execute one full search-and-save cycle. Returns enriched listings."""
     start_time = time.monotonic()
@@ -126,7 +127,9 @@ def run_once(
         _print_summary(enriched)
         _print_llm_result(llm_result)
 
-        if force_email or (config.SEND_EMAIL and should_send(enriched, new_vins, price_drops)):
+        if no_email:
+            log.info("Email skipped (--no-email)")
+        elif force_email or (config.SEND_EMAIL and should_send(enriched, new_vins, price_drops)):
             sent = send_summary(enriched, llm_result, new_vins, price_drops, force=force_email)
             log.info("Email dispatch: %s", "sent" if sent else "failed")
         else:
@@ -483,6 +486,7 @@ def main() -> None:
     parser.add_argument("--no-llm",      action="store_true", help="Skip LLM analysis")
     parser.add_argument("--backend",     choices=["ollama", "api"], help="Force a specific LLM backend")
     parser.add_argument("--email",       action="store_true", help="Force email send this run")
+    parser.add_argument("--no-email",    action="store_true", help="Suppress email this run even if SEND_EMAIL=True")
     parser.add_argument("--history",     action="store_true", help="Print run history and exit")
     parser.add_argument("--check-setup", action="store_true", help="Validate config and test backends")
     args = parser.parse_args()
@@ -502,6 +506,7 @@ def main() -> None:
         force_backend=args.backend,
         dry_run=args.dry_run,
         force_email=args.email,
+        no_email=args.no_email,
     )
 
     if args.schedule:
