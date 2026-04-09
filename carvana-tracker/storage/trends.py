@@ -53,7 +53,9 @@ def build_trend_charts_html(trends: dict[str, list[dict]]) -> str:
     return (
         "<h3>Price Trends</h3>"
         + note
+        + "<h4 style='margin-bottom:4px'>Average Price by Model</h4>"
         + f"<p><img src='{avg_url}' alt='Average price trend' style='max-width:100%;border:1px solid #ddd;border-radius:4px'></p>"
+        + "<h4 style='margin-bottom:4px'>Best Available Price by Model</h4>"
         + f"<p><img src='{min_url}' alt='Minimum price trend' style='max-width:100%;border:1px solid #ddd;border-radius:4px'></p>"
     )
 
