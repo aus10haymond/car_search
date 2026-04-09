@@ -7,7 +7,7 @@ def setup_logging(log_file: str) -> None:
     """
     Configure root logger:
       - Console: INFO level, human-readable with timestamps
-      - File: DEBUG level, rotated at 5 MB, 3 backups kept
+      - File: DEBUG level, rotated at 5 MB, 3 backups kept (tracker.log)
     """
     Path(log_file).parent.mkdir(parents=True, exist_ok=True)
 
@@ -42,3 +42,34 @@ def setup_logging(log_file: str) -> None:
 
     root.addHandler(console_handler)
     root.addHandler(file_handler)
+
+
+def start_run_log(log_dir: str, run_id: str, timestamp: str) -> logging.FileHandler:
+    """
+    Add a dedicated per-run log file handler to the root logger.
+    File is named:  logs/run_YYYYMMDD_HHMMSS_<short_id>.log
+    Returns the handler so the caller can remove it when the run ends.
+    """
+    logs_dir = Path(log_dir) / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    short_id  = run_id.split("-")[0]
+    log_path  = logs_dir / f"run_{timestamp}_{short_id}.log"
+
+    fmt = logging.Formatter(
+        "%(asctime)s [%(levelname)-8s] %(name)s — %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    handler = logging.FileHandler(str(log_path), encoding="utf-8")
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(fmt)
+
+    logging.getLogger().addHandler(handler)
+    return handler
+
+
+def end_run_log(handler: logging.FileHandler) -> None:
+    """Flush, close, and remove the per-run log handler."""
+    handler.flush()
+    handler.close()
+    logging.getLogger().removeHandler(handler)
