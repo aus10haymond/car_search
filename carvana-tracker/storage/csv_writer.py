@@ -14,8 +14,9 @@ log = logging.getLogger(__name__)
 _COLUMNS = [
     "run_id", "scraped_at", "year", "make", "model", "trim", "price", "mileage",
     "monthly_carvana", "monthly_estimated", "shipping", "total_with_shipping",
-    "price_per_mile", "value_score", "is_hybrid", "vin", "url",
-    "llm_backend_used", "extraction_strategy", "color_exterior", "color_interior",
+    "price_per_mile", "value_score", "is_hybrid", "is_alert", "price_drop_pct",
+    "vin", "url", "llm_backend_used", "extraction_strategy",
+    "color_exterior", "color_interior",
 ]
 
 

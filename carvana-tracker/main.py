@@ -113,12 +113,17 @@ def run_once(
 
         # ── Phase 6: Save ─────────────────────────────────────────────────────
         log.info("--- PHASE 6: SAVING ---")
-        csv_path = write_results(enriched, run_id, llm_backend=llm_result.backend_used)
-        log.debug("CSV written: %s", csv_path)
-
         history_db.init_db()
         current_vins = {r.get("vin") for r in enriched if r.get("vin")}
         new_vins     = history_db.get_new_listings(current_vins)
+        # Query price drops before saving current run — looks at prior history only
+        price_drops  = history_db.get_price_drops(enriched)
+
+        # Stamp alert flags onto listing dicts before writing CSV
+        _mark_alert_flags(enriched, new_vins, price_drops)
+
+        csv_path = write_results(enriched, run_id, llm_backend=llm_result.backend_used)
+        log.debug("CSV written: %s", csv_path)
 
         duration = time.monotonic() - start_time
         history_db.save_run(history_db.RunRecord(
@@ -136,21 +141,20 @@ def run_once(
 
         # ── Phase 7: Alerts ───────────────────────────────────────────────────
         log.info("--- PHASE 7: ALERTS & NOTIFICATIONS ---")
-        price_drops = history_db.get_price_drops(enriched)
         _log_alert_summary(new_vins, price_drops)
 
         # ── Output ────────────────────────────────────────────────────────────
         _print_summary(enriched)
         _print_llm_result(llm_result)
 
-        trends = history_db.get_model_price_trends(days=60)
-        log.info("Price trend data: %d models, up to 60 days", len(trends))
+        trends = history_db.get_model_price_trends(days=180)
+        log.info("Price trend data: %d models, up to 180 days", len(trends))
 
         if no_email:
             log.info("Email skipped (--no-email)")
         elif force_email or (config.SEND_EMAIL and should_send(enriched, new_vins, price_drops)):
-            sent = send_summary(enriched, llm_result, new_vins, price_drops,
-                                trends=trends, force=force_email)
+            sent = send_summary(enriched, llm_result, price_drops,
+                                trends=trends, csv_path=csv_path, force=force_email)
             log.info("Email dispatch: %s", "sent" if sent else "failed")
         else:
             log.info("Email skipped (no alert conditions met or SEND_EMAIL=False)")
@@ -276,6 +280,27 @@ def _run_llm(
     return result
 
 
+# ── Alert flag helper ─────────────────────────────────────────────────────────
+
+def _mark_alert_flags(
+    enriched: list[dict],
+    new_vins: set[str],
+    price_drops: list[dict],
+) -> None:
+    """Stamp is_alert and price_drop_pct onto each listing dict for CSV output."""
+    drop_by_vin = {d["vin"]: d["drop_pct"] for d in price_drops if d.get("vin")}
+    for listing in enriched:
+        vin   = listing.get("vin") or ""
+        price = listing.get("price") or 999999
+        score = listing.get("value_score") or 0
+        listing["is_alert"] = int(
+            price < config.ALERT_PRICE_THRESHOLD
+            or (vin in new_vins and score > 70)
+            or vin in drop_by_vin
+        )
+        listing["price_drop_pct"] = drop_by_vin.get(vin, "")
+
+
 # ── Structured log helpers ────────────────────────────────────────────────────
 
 def _log_run_header(run_id: str, run_at: str, dry_run: bool) -> None:
@@ -335,6 +360,8 @@ def _log_llm_summary(result: LLMResult) -> None:
     log.info("  Latency:  %dms", result.latency_ms)
     if result.tokens_used:
         log.info("  Tokens:   %d", result.tokens_used)
+    if result.cache_hit is not None:
+        log.info("  Cache hit: %s", result.cache_hit)
     if result.error:
         log.info("  Error:    %s", result.error)
     if result.analysis:
