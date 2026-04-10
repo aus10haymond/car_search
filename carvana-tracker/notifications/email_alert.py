@@ -92,6 +92,7 @@ def send_summary(
 
     payload = {"Messages": [message]}
 
+    resp = None
     try:
         resp = requests.post(
             _MAILJET_SEND_URL,
@@ -103,7 +104,8 @@ def send_summary(
         log.info("Email sent to %d recipient(s) via Mailjet", len(config.EMAIL_TO))
         return True
     except requests.HTTPError as exc:
-        log.error("Mailjet HTTP error: %s — %s", exc, resp.text[:300])
+        body = resp.text[:300] if resp is not None else ""
+        log.error("Mailjet HTTP error: %s — %s", exc, body)
     except Exception as exc:
         log.error("Email send failed: %s", exc)
     return False

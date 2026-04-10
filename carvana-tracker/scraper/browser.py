@@ -8,6 +8,7 @@ when done. Use as a context manager to ensure cleanup.
 
 import logging
 import time
+from typing import Any
 
 import config
 
@@ -22,9 +23,10 @@ _USER_AGENT = (
 
 class Browser:
     def __init__(self):
-        self._playwright = None
-        self._browser = None
-        self._context = None
+        self._playwright: Any = None
+        self._browser:    Any = None
+        self._context:    Any = None
+        self._page:       Any = None
 
     def start(self) -> None:
         from playwright.sync_api import sync_playwright
@@ -39,7 +41,13 @@ class Browser:
         log.debug("Browser started (headless=%s)", config.HEADLESS)
 
     def _new_context(self) -> None:
-        """Create (or replace) the browser context, clearing all cookies/session state."""
+        """Create (or replace) the browser context and a single reusable page."""
+        if self._page:
+            try:
+                self._page.close()
+            except Exception:
+                pass
+            self._page = None
         if self._context:
             try:
                 self._context.close()
@@ -49,6 +57,7 @@ class Browser:
             user_agent=_USER_AGENT,
             viewport={"width": 1280, "height": 800},
         )
+        self._page = self._context.new_page()
         log.debug("Fresh browser context created")
 
     def reset_context(self) -> None:
@@ -62,22 +71,35 @@ class Browser:
 
     def get_page_content(self, url: str) -> str:
         """
-        Load `url` and return raw HTML after network is idle.
+        Navigate the persistent page to `url` and return raw HTML.
+        Reusing the same page across pagination preserves referrer headers
+        and browser state, avoiding bot detection on page 2+.
         Returns empty string on TimeoutError; does not raise.
         """
         from playwright.sync_api import TimeoutError as PWTimeout
 
-        page = self._context.new_page()
         try:
-            page.goto(
+            self._page.goto(
                 url,
                 wait_until="load",
                 timeout=config.PAGE_TIMEOUT_SECONDS * 1000,
             )
-            # Give React/Next.js time to hydrate after initial load
-            time.sleep(3)
-            html = page.content()
-            log.debug("Loaded %s (%d bytes)", url, len(html))
+            # Wait for listing content to appear — handles pages where results
+            # are injected dynamically after the initial HTML load.
+            try:
+                self._page.wait_for_selector(
+                    'script[type="application/ld+json"], [data-qa="vehicle-card"], [class*="VehicleCard"]',
+                    timeout=8000,
+                )
+            except Exception:
+                pass  # No vehicle elements found; extraction will handle it
+
+            final_url = self._page.url
+            if final_url != url:
+                log.info("Redirected: %s → %s", url, final_url)
+
+            html = self._page.content()
+            log.info("Loaded %s (%d bytes)", url, len(html))
             return html
         except PWTimeout:
             log.warning("Timeout loading %s — skipping", url)
@@ -86,11 +108,12 @@ class Browser:
             log.warning("Error loading %s: %s", url, exc)
             return ""
         finally:
-            page.close()
             time.sleep(config.REQUEST_DELAY_SECONDS)
 
     def close(self) -> None:
         try:
+            if self._page:
+                self._page.close()
             if self._browser:
                 self._browser.close()
             if self._playwright:

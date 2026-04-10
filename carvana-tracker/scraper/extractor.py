@@ -170,7 +170,7 @@ def extract_from_dom(html: str) -> list[dict]:
                 '[class*="monthly"]', '[class*="payment"]',
             ])
             link_tag = card.find("a", href=True)
-            href = link_tag["href"] if link_tag else ""
+            href = str(link_tag["href"]) if link_tag else ""
             url = (
                 f"https://www.carvana.com{href}"
                 if href and not href.startswith("http")

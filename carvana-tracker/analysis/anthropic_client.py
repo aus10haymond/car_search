@@ -41,6 +41,7 @@ class AnthropicClient:
             raise AnthropicUnavailableError(
                 "anthropic package not installed — run: pip install anthropic"
             ) from exc
+        assert anthropic is not None
 
         # Split the prompt at [SYSTEM CONTEXT] / [LISTINGS DATA] boundary so the
         # analyst persona lives in the system parameter alongside the reference doc.

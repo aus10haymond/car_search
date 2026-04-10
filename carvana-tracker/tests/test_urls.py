@@ -49,19 +49,27 @@ def test_no_fuel_type_filter():
     assert "fuelTypes" not in decoded["filters"]
 
 
-def test_page_1_not_appended():
+def test_page_1_not_in_cvnaid():
     url = build_search_url("Toyota", "RAV4", 2021, 2025, page=1)
-    assert "&page=" not in url, "page param should not appear for page=1"
+    encoded = url.split("cvnaid=")[1]
+    decoded = json.loads(base64.b64decode(encoded).decode())
+    assert "page" not in decoded, "page key should be absent for page=1"
 
 
-def test_page_2_appended():
+def test_page_2_encoded_in_cvnaid():
     url = build_search_url("Toyota", "RAV4", 2021, 2025, page=2)
-    assert "&page=2" in url, "page=2 must be appended to the URL"
+    assert "&page=" not in url, "page must not appear as a query param"
+    encoded = url.split("cvnaid=")[1]
+    decoded = json.loads(base64.b64decode(encoded).decode())
+    assert decoded["page"] == 2, "page=2 must be encoded inside cvnaid JSON"
 
 
-def test_page_5_appended():
+def test_page_5_encoded_in_cvnaid():
     url = build_search_url("Kia", "Sportage", 2021, 2025, page=5)
-    assert url.endswith("&page=5")
+    assert "&page=" not in url, "page must not appear as a query param"
+    encoded = url.split("cvnaid=")[1]
+    decoded = json.loads(base64.b64decode(encoded).decode())
+    assert decoded["page"] == 5, "page=5 must be encoded inside cvnaid JSON"
 
 
 def test_url_base():

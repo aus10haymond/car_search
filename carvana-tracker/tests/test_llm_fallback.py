@@ -29,9 +29,10 @@ def _listings():
 def _analyzer():
     """Return an LLMAnalyzer with both backends pre-configured."""
     analyzer = LLMAnalyzer.__new__(LLMAnalyzer)
-    analyzer.ollama    = MagicMock()
-    analyzer.anthropic = MagicMock()
-    analyzer.backend_used = None
+    analyzer.ollama        = MagicMock()
+    analyzer.anthropic     = MagicMock()
+    analyzer.backend_used  = None
+    analyzer._reference_doc = ""
     return analyzer
 
 
@@ -44,7 +45,7 @@ def test_uses_ollama_when_available(monkeypatch):
 
     analyzer = _analyzer()
     analyzer.anthropic.is_configured.return_value = True
-    analyzer.anthropic.analyze.return_value = "Great deal on the RAV4."
+    analyzer.anthropic.analyze.return_value = ("Great deal on the RAV4.", None)
     analyzer.ollama.is_available.return_value = True
 
     result = analyzer.analyze(_listings())
@@ -65,7 +66,7 @@ def test_ollama_unavailable_error_falls_back(monkeypatch):
     analyzer.ollama.is_available.return_value = True
     analyzer.ollama.analyze.side_effect = OllamaUnavailableError("connection refused")
     analyzer.anthropic.is_configured.return_value = True
-    analyzer.anthropic.analyze.return_value = "API analysis here."
+    analyzer.anthropic.analyze.return_value = ("API analysis here.", None)
 
     result = analyzer.analyze(_listings())
 
@@ -82,7 +83,7 @@ def test_ollama_model_error_falls_back(monkeypatch):
     analyzer.ollama.is_available.return_value = True
     analyzer.ollama.analyze.side_effect = OllamaModelError("model not found")
     analyzer.anthropic.is_configured.return_value = True
-    analyzer.anthropic.analyze.return_value = "API analysis here."
+    analyzer.anthropic.analyze.return_value = ("API analysis here.", None)
 
     result = analyzer.analyze(_listings())
 
@@ -96,7 +97,7 @@ def test_ollama_not_available_falls_back(monkeypatch):
     analyzer = _analyzer()
     analyzer.ollama.is_available.return_value = False
     analyzer.anthropic.is_configured.return_value = True
-    analyzer.anthropic.analyze.return_value = "API analysis here."
+    analyzer.anthropic.analyze.return_value = ("API analysis here.", None)
 
     result = analyzer.analyze(_listings())
 
@@ -171,6 +172,7 @@ def test_result_is_llmresult_instance(monkeypatch):
     monkeypatch.setattr("config.ANTHROPIC_ENABLED", True)
 
     analyzer = _analyzer()
+    analyzer.anthropic.is_configured.return_value = False
     analyzer.ollama.is_available.return_value = True
     analyzer.ollama.analyze.return_value = "some analysis"
 
@@ -188,7 +190,7 @@ def test_result_has_model_used(monkeypatch):
 
     analyzer = _analyzer()
     analyzer.anthropic.is_configured.return_value = True
-    analyzer.anthropic.analyze.return_value = "analysis"
+    analyzer.anthropic.analyze.return_value = ("analysis", None)
 
     result = analyzer.analyze(_listings())
 
