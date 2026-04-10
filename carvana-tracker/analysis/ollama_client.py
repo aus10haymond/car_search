@@ -108,3 +108,21 @@ class OllamaClient:
             raise OllamaUnavailableError(f"Ollama returned HTTP {resp.status_code}") from exc
 
         return resp.json().get("response", "")
+
+    def unload(self) -> None:
+        """
+        Signal Ollama to evict the model from RAM immediately by sending
+        a generate request with keep_alive=0.
+        No-ops if the server is unreachable. Errors are silently logged.
+        """
+        try:
+            log.info("Ollama: unloading %s from RAM…", self.model)
+            resp = requests.post(
+                f"{self.base_url}/api/generate",
+                json={"model": self.model, "prompt": "", "keep_alive": 0},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            log.info("Ollama: %s unloaded", self.model)
+        except Exception as exc:
+            log.debug("Ollama unload failed (non-fatal): %s", exc)

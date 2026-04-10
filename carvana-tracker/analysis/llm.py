@@ -85,6 +85,8 @@ class LLMAnalyzer:
                         latency, cache_hit,
                     )
                     self.backend_used = "anthropic_api"
+                    if config.OLLAMA_ENABLED:
+                        self.ollama.unload()
                     return LLMResult(
                         analysis=text,
                         backend_used="anthropic_api",
@@ -110,6 +112,7 @@ class LLMAnalyzer:
                     latency = int((time.monotonic() - t0) * 1000)
                     log.info("LLM analysis complete via Ollama (%dms)", latency)
                     self.backend_used = "ollama"
+                    self.ollama.unload()
                     return LLMResult(
                         analysis=text,
                         backend_used="ollama",
