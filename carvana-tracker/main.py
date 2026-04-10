@@ -114,7 +114,7 @@ def run_once(
         # ── Phase 6: Save ─────────────────────────────────────────────────────
         log.info("--- PHASE 6: SAVING ---")
         history_db.init_db()
-        current_vins = {r.get("vin") for r in enriched if r.get("vin")}
+        current_vins = {str(r["vin"]) for r in enriched if r.get("vin")}
         new_vins     = history_db.get_new_listings(current_vins)
         # Query price drops before saving current run — looks at prior history only
         price_drops  = history_db.get_price_drops(enriched)
@@ -457,6 +457,7 @@ def print_history() -> None:
         print("No run history found.")
         return
 
+    tabulate = None
     try:
         from tabulate import tabulate
         use_tabulate = True
@@ -477,7 +478,7 @@ def print_history() -> None:
         ]
         for r in runs
     ]
-    if use_tabulate:
+    if use_tabulate and tabulate is not None:
         print(tabulate(
             run_rows,
             headers=["Run At (UTC)", "Listings", "LLM Backend", "Model", "Duration"],
@@ -501,7 +502,7 @@ def print_history() -> None:
         ]
         for r in stats["model_latest"]
     ]
-    if use_tabulate:
+    if use_tabulate and tabulate is not None:
         print(tabulate(
             model_rows,
             headers=["Model", "Avg Price", "Best Price", "# Listings", "As Of"],
@@ -530,6 +531,7 @@ def print_history() -> None:
 # ── Output helpers ────────────────────────────────────────────────────────────
 
 def _print_summary(listings: list[dict]) -> None:
+    tabulate = None
     try:
         from tabulate import tabulate
     except ImportError:
@@ -554,6 +556,7 @@ def _print_summary(listings: list[dict]) -> None:
             f"{r.get('value_score', 0):.0f}",
         ])
 
+    assert tabulate is not None
     headers = ["Vehicle", "Trim", "Price", "Mileage", "Est. Payment", "Shipping", "Hybrid", "Score"]
     print("\n" + tabulate(rows, headers=headers, tablefmt="rounded_outline"))
     print(
@@ -615,7 +618,7 @@ def main() -> None:
 
     if args.schedule:
         try:
-            import schedule as sched
+            import schedule as sched  # type: ignore[import-untyped]
         except ImportError:
             log.error("Install schedule: pip install schedule")
             return

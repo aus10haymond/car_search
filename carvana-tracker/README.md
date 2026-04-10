@@ -7,6 +7,7 @@ Scheduled Python tool that scrapes Carvana for used SUVs, scores and filters lis
 ## What it does
 
 Each run:
+
 1. Scrapes Carvana for Honda CR-V, Toyota RAV4, Subaru Forester, and Kia Sportage
 2. Filters by price, mileage, and year
 3. Scores each listing 0–100 based on price vs. group average, mileage, age, hybrid status, and shipping
@@ -42,7 +43,7 @@ Edit `config.py` to set your preferences (vehicles, price/mileage limits, ZIP co
 
 Create a `.env` file in the `carvana-tracker/` directory with your secrets:
 
-```
+```dotenv
 # Email sending via Mailjet (https://mailjet.com — free tier works)
 MAILJET_API_KEY=your_api_key
 MAILJET_SECRET_KEY=your_secret_key
@@ -105,7 +106,7 @@ python main.py --check-setup
 All settings live in `config.py`. Secrets load from `.env` via python-dotenv.
 
 | Setting | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `VEHICLES` | 4 SUV models | List of `(make, model, min_year, max_year)` tuples to search |
 | `MAX_PRICE` | 30000 | Filter out listings above this price |
 | `MAX_MILEAGE` | 80000 | Filter out listings above this mileage |
@@ -131,11 +132,13 @@ All settings live in `config.py`. Secrets load from `.env` via python-dotenv.
 To run the tracker automatically every day:
 
 1. Create `run_tracker.bat` in the `carvana-tracker/` directory:
+
    ```bat
    @echo off
    cd /d C:\path\to\car_search\carvana-tracker
    python main.py --once
    ```
+
 2. Open Task Scheduler → Create Basic Task
 3. Set the trigger to **Daily** at your preferred time
 4. Set the action to run `run_tracker.bat`
@@ -148,7 +151,7 @@ To run the tracker automatically every day:
 All output is written to `carvana_results/` (gitignored):
 
 | File | Description |
-|---|---|
+| --- | --- |
 | `carvana_YYYYMMDD_HHMMSS.csv` | Timestamped results for each run |
 | `carvana_latest.csv` | Always overwritten with the most recent run |
 | `history.db` | SQLite database tracking all runs, listings, and price history |
@@ -162,7 +165,7 @@ All output is written to `carvana_results/` (gitignored):
 Each listing is scored before LLM analysis. Higher is better.
 
 | Component | Weight | Logic |
-|---|---|---|
+| --- | --- | --- |
 | Price vs. group average | 35 | % below average price for same make/model. Capped at ±30% |
 | Mileage | 25 | Inverse linear: 0 mi = 25 pts, 80,000 mi = 0 pts |
 | Age | 20 | Newer = better. 2025 = 20 pts, 2021 = 0 pts |
@@ -190,7 +193,7 @@ python -m pytest tests/ -v
 ```
 
 | Test file | Covers |
-|---|---|
+| --- | --- |
 | `test_urls.py` | URL structure, base64 encoding, page param |
 | `test_payment_calc.py` | Monthly payment, TCO, price per mile, depreciation |
 | `test_rules.py` | Filter removal, hybrid detection, value score boundaries |
