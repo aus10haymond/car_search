@@ -32,7 +32,7 @@ class Browser:
         from playwright.sync_api import sync_playwright
 
         self._playwright = sync_playwright().start()
-        launch_kwargs = {"headless": config.HEADLESS}
+        launch_kwargs: dict[str, Any] = {"headless": config.HEADLESS}
         if config.PROXY_URL:
             launch_kwargs["proxy"] = {"server": config.PROXY_URL}
 

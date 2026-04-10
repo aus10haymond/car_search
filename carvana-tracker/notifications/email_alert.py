@@ -36,7 +36,7 @@ def should_send(
     """
     if any((r.get("price") or 999999) < config.ALERT_PRICE_THRESHOLD for r in listings):
         return True
-    if any(v in new_vins for v in (r.get("vin") for r in listings) if (r.get("value_score") or 0) > 70):
+    if any(r.get("vin") in new_vins and (r.get("value_score") or 0) > 70 for r in listings):
         return True
     if price_drops:
         return True

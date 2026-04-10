@@ -5,6 +5,7 @@ All HTTP / SDK calls are mocked — no real network calls.
 
 import sys
 import os
+from typing import Any
 from unittest.mock import MagicMock, patch, PropertyMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -26,7 +27,7 @@ def _listings():
     ]
 
 
-def _analyzer():
+def _analyzer() -> Any:
     """Return an LLMAnalyzer with both backends pre-configured."""
     analyzer = LLMAnalyzer.__new__(LLMAnalyzer)
     analyzer.ollama        = MagicMock()
