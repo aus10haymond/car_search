@@ -20,7 +20,7 @@ DB_PATH    = "./carvana_results/history.db"
 LOG_FILE   = "./carvana_results/tracker.log"
 
 # ── AI analysis ───────────────────────────────────────────────────────────────
-REFERENCE_DOC_PATH = "./SUV_REFERENCE_CONTEXT.md"
+# Reference doc is set per-profile in profiles.yaml via reference_doc_path.
 
 # Primary: Anthropic API
 ANTHROPIC_ENABLED    = True

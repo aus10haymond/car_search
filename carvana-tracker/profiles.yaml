@@ -17,7 +17,7 @@
 #   fuel_type_filters — list of fuel types to search: Hybrid, Gas, or null (all).
 #                       Defaults to [null] (no fuel filter) if omitted.
 #   reference_doc_path — path to a markdown file with vehicle context for the LLM.
-#                        Falls back to the global REFERENCE_DOC_PATH in config if omitted.
+#                        If omitted, the LLM evaluates on listing data alone.
 
 profiles:
   - profile_id: mine
@@ -32,6 +32,7 @@ profiles:
     min_year: 2021
     max_year: 2025
     fuel_type_filters: [Hybrid, Gas]
+    reference_doc_path: ./SUV_REFERENCE_CONTEXT.md
     email_to:
       - your-email@example.com   # replace with your actual address
 
