@@ -172,7 +172,7 @@ def _build_html(
         "<table border='1' cellpadding='7' cellspacing='0' "
         "style='border-collapse:collapse;font-size:13px;width:100%'>"
         "<tr style='background:#f0f0f0;text-align:left'>"
-        "<th>#</th><th>Vehicle</th><th>Trim</th><th>Price</th>"
+        "<th>#</th><th>Vehicle</th><th>Color</th><th>Trim</th><th>Price</th>"
         "<th>Mileage</th><th>Est. Payment</th><th>Score</th><th>Hybrid</th><th></th>"
         "</tr>"
     )
@@ -203,10 +203,17 @@ def _build_html(
             f"border-radius:3px;text-decoration:none;font-size:12px;white-space:nowrap'>View</a>"
         )
 
+        color_ext = (r.get("color_exterior") or "").strip()
+        color_int = (r.get("color_interior") or "").strip()
+        color_cell = color_ext
+        if color_int:
+            color_cell += f"<br><span style='color:#777;font-size:11px'>{color_int}</span>"
+
         parts.append(
             f"<tr style='{row_bg}'>"
             f"<td style='text-align:center;white-space:nowrap'>{position}</td>"
             f"<td><b>{r.get('year')} {r.get('make')} {r.get('model')}</b></td>"
+            f"<td style='color:#555'>{color_cell}</td>"
             f"<td style='color:#555'>{(r.get('trim') or '')[:28]}</td>"
             f"<td>{price_cell}</td>"
             f"<td>{f'{mileage:,}' if mileage else 'N/A'}</td>"
