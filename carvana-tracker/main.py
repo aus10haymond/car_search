@@ -154,7 +154,8 @@ def run_once(
             log.info("Email skipped (--no-email)")
         elif force_email or (config.SEND_EMAIL and should_send(enriched, new_vins, price_drops)):
             sent = send_summary(enriched, llm_result, price_drops,
-                                trends=trends, csv_path=csv_path, force=force_email)
+                                trends=trends, csv_path=csv_path, force=force_email,
+                                new_vins=new_vins)
             log.info("Email dispatch: %s", "sent" if sent else "failed")
         else:
             log.info("Email skipped (no alert conditions met or SEND_EMAIL=False)")

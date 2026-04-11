@@ -50,6 +50,7 @@ def send_summary(
     trends: dict | None = None,
     csv_path: Path | str | None = None,
     force: bool = False,
+    new_vins: set[str] | None = None,
 ) -> bool:
     """
     Send an HTML email summary via Mailjet with the CSV attached.
@@ -66,7 +67,7 @@ def send_summary(
         return False
 
     subject = _build_subject(listings, price_drops)
-    html    = _build_html(listings, llm_result, price_drops, trends or {})
+    html    = _build_html(listings, llm_result, price_drops, trends or {}, new_vins or set())
 
     recipients = [{"Email": addr} for addr in config.EMAIL_TO]
 
@@ -141,6 +142,7 @@ def _build_html(
     llm_result: LLMResult,
     price_drops: list[dict],
     trends: dict,
+    new_vins: set[str] | None = None,
 ) -> str:
     run_time = datetime.now().strftime("%b %d, %Y %I:%M %p")
     top10    = listings[:10]
@@ -152,6 +154,7 @@ def _build_html(
         if r.get("vin")
     }
     drop_by_vin: dict[str, dict] = {d["vin"]: d for d in price_drops if d.get("vin")}
+    new_vins = new_vins or set()
 
     parts = [
         "<html><body style='font-family:sans-serif;max-width:880px;margin:auto;color:#222;line-height:1.5'>",
@@ -165,7 +168,9 @@ def _build_html(
         "<p style='font-size:12px;color:#666;margin-top:0'>"
         "<b>★</b> = AI top pick by value score &nbsp;|&nbsp;"
         "<span style='background:#fffde7;padding:1px 5px;border:1px solid #f0e68c'>&nbsp;</span>"
-        " = price drop since last run"
+        " = price drop since last run &nbsp;|&nbsp;"
+        "<span style='background:#27ae60;color:white;font-size:11px;padding:1px 5px;"
+        "border-radius:3px'>NEW</span> = first time seen"
         "</p>"
     )
     parts.append(
@@ -184,6 +189,7 @@ def _build_html(
         mileage  = r.get("mileage")
         is_drop  = vin in drop_by_vin
         is_pick  = vin in top3_vins
+        is_new   = vin in new_vins
 
         row_bg   = "background:#fffde7" if is_drop else ""
         position = f"<b>★ {i}</b>" if is_pick else str(i)
@@ -212,7 +218,10 @@ def _build_html(
         parts.append(
             f"<tr style='{row_bg}'>"
             f"<td style='text-align:center;white-space:nowrap'>{position}</td>"
-            f"<td><b>{r.get('year')} {r.get('make')} {r.get('model')}</b></td>"
+            f"<td><b>{r.get('year')} {r.get('make')} {r.get('model')}</b>"
+            + (" <span style='background:#27ae60;color:white;font-size:10px;padding:1px 4px;"
+               "border-radius:3px;vertical-align:middle'>NEW</span>" if is_new else "")
+            + "</td>"
             f"<td style='color:#555'>{color_cell}</td>"
             f"<td style='color:#555'>{(r.get('trim') or '')[:28]}</td>"
             f"<td>{price_cell}</td>"
