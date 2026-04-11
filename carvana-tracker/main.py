@@ -28,6 +28,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 import config
+from profiles import SearchProfile, load_profiles, resolve_reference_doc
 from utils.logging_config import setup_logging, start_run_log, end_run_log
 from scraper.urls import build_search_url
 from scraper.browser import Browser
@@ -45,36 +46,62 @@ log = logging.getLogger(__name__)
 # ── Main run cycle ────────────────────────────────────────────────────────────
 
 def run_once(
+    profiles:      list[SearchProfile],
     skip_llm:      bool = False,
     force_backend: str | None = None,
     dry_run:       bool = False,
     force_email:   bool = False,
     no_email:      bool = False,
 ) -> list[dict]:
-    """Execute one full search-and-save cycle. Returns enriched listings."""
+    """Run all profiles in sequence. Returns combined enriched listings from all profiles."""
+    all_enriched: list[dict] = []
+
+    # Ollama pre-warm once before iterating profiles (shared backend)
+    if config.OLLAMA_ENABLED:
+        from analysis.ollama_client import OllamaClient
+        OllamaClient(config.OLLAMA_BASE_URL, config.OLLAMA_MODEL, config.OLLAMA_TIMEOUT).warmup()
+        log.debug("Ollama warmup started (fallback backend)")
+
+    for profile in profiles:
+        log.info("=" * 60)
+        log.info("STARTING PROFILE: %s (%s)", profile.profile_id, profile.label)
+        log.info("=" * 60)
+        result = _run_profile(
+            profile,
+            skip_llm=skip_llm,
+            force_backend=force_backend,
+            dry_run=dry_run,
+            force_email=force_email,
+            no_email=no_email,
+        )
+        all_enriched.extend(result)
+
+    return all_enriched
+
+
+def _run_profile(
+    profile:       SearchProfile,
+    skip_llm:      bool = False,
+    force_backend: str | None = None,
+    dry_run:       bool = False,
+    force_email:   bool = False,
+    no_email:      bool = False,
+) -> list[dict]:
+    """Execute one full search-and-save cycle for a single profile."""
     start_time = time.monotonic()
     run_id     = str(uuid.uuid4())
     run_at     = datetime.now(timezone.utc).isoformat()
     timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Per-run log file (captures everything at DEBUG level)
     run_log_handler = start_run_log(config.OUTPUT_DIR, run_id, timestamp)
-
-    _log_run_header(run_id, run_at, dry_run)
+    _log_run_header(run_id, run_at, dry_run, profile)
 
     try:
-        # ── Ollama pre-warm (non-blocking fallback prep) ──────────────────────
-        if config.OLLAMA_ENABLED:
-            from analysis.ollama_client import OllamaClient
-            OllamaClient(config.OLLAMA_BASE_URL, config.OLLAMA_MODEL, config.OLLAMA_TIMEOUT).warmup()
-            log.debug("Ollama warmup started (fallback backend)")
-
         # ── Phase 1: Scrape ───────────────────────────────────────────────────
         log.info("--- PHASE 1: SCRAPING ---")
-        if config.FUEL_TYPE_FILTERS:
-            log.info("Fuel type searches: %s", ", ".join(f or "all" for f in config.FUEL_TYPE_FILTERS))
-        all_raw, vehicle_stats = _scrape(run_id)
-
+        fuel_filters = profile.fuel_type_filters or [None]
+        log.info("Fuel type searches: %s", ", ".join(f or "all" for f in fuel_filters))
+        all_raw, vehicle_stats = _scrape(run_id, profile)
         _log_scrape_summary(vehicle_stats, all_raw)
 
         # ── Phase 2: Deduplicate ──────────────────────────────────────────────
@@ -83,16 +110,21 @@ def run_once(
 
         # ── Phase 3: Filter ───────────────────────────────────────────────────
         log.info("--- PHASE 3: FILTERING ---")
-        filtered = apply_filters(deduped)
+        filtered = apply_filters(
+            deduped,
+            max_price=profile.max_price,
+            max_mileage=profile.max_mileage,
+            min_year=profile.min_year,
+            max_year=profile.max_year,
+        )
         if not filtered:
-            log.warning("No listings passed filters — run complete with no output.")
+            log.warning("No listings passed filters — profile complete with no output.")
             return []
 
         # ── Phase 4: Enrich + score ───────────────────────────────────────────
         log.info("--- PHASE 4: ENRICHMENT & SCORING ---")
-        enriched = enrich_listings(filtered)
-        # Model preference order first (CR-V, RAV4, Forester, Sportage),
-        # then by value score descending within each group.
+        enriched = enrich_listings(filtered, max_year=profile.max_year,
+                                   max_mileage=profile.max_mileage)
         _n = len(MODEL_PREFERENCE_ORDER)
         enriched.sort(key=lambda x: (
             MODEL_PREFERENCE_ORDER.index(x["model"]) if x.get("model") in MODEL_PREFERENCE_ORDER else _n,
@@ -102,7 +134,14 @@ def run_once(
 
         # ── Phase 5: LLM analysis ─────────────────────────────────────────────
         log.info("--- PHASE 5: LLM ANALYSIS ---")
-        llm_result = _run_llm(enriched, skip_llm, force_backend)
+        reference_doc       = resolve_reference_doc(profile)
+        has_hybrid_interest = any(f == "Hybrid" for f in (profile.fuel_type_filters or []))
+        llm_result = _run_llm(
+            enriched, skip_llm, force_backend,
+            reference_doc=reference_doc,
+            max_price=profile.max_price,
+            has_hybrid_interest=has_hybrid_interest,
+        )
         _log_llm_summary(llm_result)
 
         if dry_run:
@@ -115,12 +154,10 @@ def run_once(
         log.info("--- PHASE 6: SAVING ---")
         history_db.init_db()
         current_vins = {str(r["vin"]) for r in enriched if r.get("vin")}
-        new_vins     = history_db.get_new_listings(current_vins)
-        # Query price drops before saving current run — looks at prior history only
+        new_vins     = history_db.get_new_listings(current_vins, profile.profile_id)
         price_drops  = history_db.get_price_drops(enriched)
 
-        # Stamp alert flags onto listing dicts before writing CSV
-        _mark_alert_flags(enriched, new_vins, price_drops)
+        _mark_alert_flags(enriched, new_vins, price_drops, profile.max_price)
 
         csv_path = write_results(enriched, run_id, llm_backend=llm_result.backend_used)
         log.debug("CSV written: %s", csv_path)
@@ -135,15 +172,15 @@ def run_once(
             llm_model=llm_result.model_used,
             duration_seconds=round(duration, 2),
         ))
-        history_db.save_listings(enriched, run_id)
+        history_db.save_listings(enriched, run_id, profile.profile_id)
         history_db.save_model_stats(enriched, run_id)
-        log.info("Saved %d listings to DB (run_id=%s)", len(enriched), run_id)
+        log.info("Saved %d listings to DB (run_id=%s, profile=%s)",
+                 len(enriched), run_id, profile.profile_id)
 
         # ── Phase 7: Alerts ───────────────────────────────────────────────────
         log.info("--- PHASE 7: ALERTS & NOTIFICATIONS ---")
         _log_alert_summary(new_vins, price_drops)
 
-        # ── Output ────────────────────────────────────────────────────────────
         _print_summary(enriched)
         _print_llm_result(llm_result)
 
@@ -152,15 +189,19 @@ def run_once(
 
         if no_email:
             log.info("Email skipped (--no-email)")
-        elif force_email or (config.SEND_EMAIL and should_send(enriched, new_vins, price_drops)):
-            sent = send_summary(enriched, llm_result, price_drops,
-                                trends=trends, csv_path=csv_path, force=force_email,
-                                new_vins=new_vins)
+        elif force_email or (config.SEND_EMAIL and should_send(enriched, new_vins, price_drops,
+                                                               max_price=profile.max_price)):
+            sent = send_summary(
+                enriched, llm_result, price_drops,
+                trends=trends, csv_path=csv_path, force=force_email,
+                new_vins=new_vins,
+                email_to=profile.email_to,
+                profile_label=profile.label,
+            )
             log.info("Email dispatch: %s", "sent" if sent else "failed")
         else:
             log.info("Email skipped (no alert conditions met or SEND_EMAIL=False)")
 
-        # ── Run summary ───────────────────────────────────────────────────────
         total_duration = time.monotonic() - start_time
         _log_run_footer(run_id, enriched, llm_result, new_vins, price_drops, total_duration, csv_path)
 
@@ -172,16 +213,17 @@ def run_once(
 
 # ── Scraping ──────────────────────────────────────────────────────────────────
 
-def _scrape(run_id: str) -> tuple[list[dict], list[dict]]:
-    """Scrape all vehicles across all configured fuel types.
+def _scrape(run_id: str, profile: SearchProfile) -> tuple[list[dict], list[dict]]:
+    """Scrape all vehicles for a profile across all configured fuel types.
     Returns (all_listings, per_vehicle_stats)."""
     all_raw: list[dict] = []
     vehicle_stats: list[dict] = []
 
-    fuel_types = config.FUEL_TYPE_FILTERS or [None]
+    fuel_types = profile.fuel_type_filters or [None]
 
     with Browser() as browser:
-        for make, model, min_year, max_year in config.VEHICLES:
+        for make, model in profile.vehicles:
+            min_year, max_year = profile.min_year, profile.max_year
             vehicle_total = 0
             pages_scraped = 0
             strategy_used = "none"
@@ -254,6 +296,9 @@ def _run_llm(
     listings: list[dict],
     skip_llm: bool,
     force_backend: str | None,
+    reference_doc: str = "",
+    max_price: int = 0,
+    has_hybrid_interest: bool = False,
 ) -> LLMResult:
     if skip_llm:
         log.info("LLM analysis skipped (--no-llm)")
@@ -270,8 +315,12 @@ def _run_llm(
         log.info("Backend forced to Anthropic API only")
 
     try:
-        analyzer = LLMAnalyzer()
-        prompt   = analyzer.build_prompt(listings)
+        analyzer = LLMAnalyzer(
+            reference_doc=reference_doc,
+            max_price=max_price,
+            has_hybrid_interest=has_hybrid_interest,
+        )
+        prompt = analyzer.build_prompt(listings)
         log.debug("LLM prompt length: %d characters, ~%d tokens", len(prompt), len(prompt) // 4)
         result = analyzer.analyze(listings)
     finally:
@@ -287,6 +336,7 @@ def _mark_alert_flags(
     enriched: list[dict],
     new_vins: set[str],
     price_drops: list[dict],
+    max_price: int = 0,
 ) -> None:
     """Stamp is_alert and price_drop_pct onto each listing dict for CSV output."""
     drop_by_vin = {d["vin"]: d["drop_pct"] for d in price_drops if d.get("vin")}
@@ -295,7 +345,7 @@ def _mark_alert_flags(
         price = listing.get("price") or 999999
         score = listing.get("value_score") or 0
         listing["is_alert"] = int(
-            price < config.ALERT_PRICE_THRESHOLD
+            (max_price > 0 and price < max_price)
             or (vin in new_vins and score > 70)
             or vin in drop_by_vin
         )
@@ -304,19 +354,17 @@ def _mark_alert_flags(
 
 # ── Structured log helpers ────────────────────────────────────────────────────
 
-def _log_run_header(run_id: str, run_at: str, dry_run: bool) -> None:
-    log.info("=" * 60)
-    log.info("CARVANA TRACKER RUN STARTED")
+def _log_run_header(run_id: str, run_at: str, dry_run: bool, profile: SearchProfile) -> None:
+    log.info("  Profile: %s (%s)", profile.profile_id, profile.label)
     log.info("  Time:    %s", datetime.now().strftime("%b %d %Y %I:%M %p"))
     log.info("  Run ID:  %s", run_id)
     log.info("  Dry run: %s", dry_run)
-    log.debug("  Vehicles: %s", [(m, mo) for m, mo, *_ in config.VEHICLES])
+    log.debug("  Vehicles: %s", profile.vehicles)
     log.debug("  Filters: max_price=$%d, max_mileage=%d, years=%d-%d",
-              config.MAX_PRICE, config.MAX_MILEAGE, config.MIN_YEAR, config.MAX_YEAR)
+              profile.max_price, profile.max_mileage, profile.min_year, profile.max_year)
     log.debug("  Ollama: %s (%s), Anthropic: %s (%s)",
               config.OLLAMA_ENABLED, config.OLLAMA_MODEL,
               config.ANTHROPIC_ENABLED, config.ANTHROPIC_MODEL)
-    log.info("=" * 60)
 
 
 def _log_scrape_summary(vehicle_stats: list[dict], all_raw: list[dict]) -> None:
@@ -405,10 +453,16 @@ def _log_run_footer(
 def check_setup() -> None:
     print("\n=== Carvana Tracker — Setup Check ===\n")
 
-    print(f"  Vehicles:      {len(config.VEHICLES)} configured")
-    print(f"  Max price:     ${config.MAX_PRICE:,}")
-    print(f"  Max mileage:   {config.MAX_MILEAGE:,} mi")
-    print(f"  Year range:    {config.MIN_YEAR}-{config.MAX_YEAR}")
+    try:
+        profiles = load_profiles("profiles.yaml")
+        print(f"  Profiles:      {len(profiles)} loaded")
+        for p in profiles:
+            print(f"    [{p.profile_id}] {p.label} — "
+                  f"{len(p.vehicles)} vehicle(s), "
+                  f"${p.max_price:,} max, "
+                  f"{len(p.email_to)} recipient(s)")
+    except Exception as exc:
+        print(f"  [!!] profiles.yaml error: {exc}")
     print(f"  Output dir:    {config.OUTPUT_DIR}")
     print()
 
@@ -436,13 +490,12 @@ def check_setup() -> None:
         print("  [--] Mailjet: not configured (MAILJET_API_KEY / MAILJET_SECRET_KEY in .env)")
 
     if config.SEND_EMAIL:
-        if config.EMAIL_FROM and config.EMAIL_TO and config.MAILJET_API_KEY:
-            print(f"  [OK] Email: enabled, {len(config.EMAIL_TO)} recipient(s)")
+        if config.EMAIL_FROM and config.MAILJET_API_KEY:
+            print("  [OK] Email: enabled (recipients set per-profile in profiles.yaml)")
         else:
-            print("  [!!] Email: SEND_EMAIL=True but configuration incomplete")
+            print("  [!!] Email: SEND_EMAIL=True but EMAIL_FROM or MAILJET_API_KEY not set")
     else:
-        to_list = ", ".join(config.EMAIL_TO) if config.EMAIL_TO else "none"
-        print(f"  [--] Email: disabled (SEND_EMAIL=False) — recipients: {to_list}")
+        print("  [--] Email: disabled (SEND_EMAIL=False)")
 
     print()
 
@@ -609,7 +662,14 @@ def main() -> None:
         print_history()
         return
 
+    try:
+        profiles = load_profiles("profiles.yaml")
+    except (FileNotFoundError, ValueError) as exc:
+        log.error("Failed to load profiles: %s", exc)
+        sys.exit(1)
+
     kwargs = dict(
+        profiles=profiles,
         skip_llm=args.no_llm,
         force_backend=args.backend,
         dry_run=args.dry_run,

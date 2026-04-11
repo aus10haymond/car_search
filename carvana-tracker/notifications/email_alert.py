@@ -27,14 +27,15 @@ def should_send(
     listings: list[dict],
     new_vins: set[str],
     price_drops: list[dict],
+    max_price: int = 0,
 ) -> bool:
     """
     Return True if any alert condition is met:
-    - Any listing below ALERT_PRICE_THRESHOLD
+    - Any listing below max_price (the profile's budget)
     - Any new listing with value_score > 70
     - Any listing with a price drop >= 5%
     """
-    if any((r.get("price") or 999999) < config.ALERT_PRICE_THRESHOLD for r in listings):
+    if max_price and any((r.get("price") or 999999) < max_price for r in listings):
         return True
     if any(r.get("vin") in new_vins and (r.get("value_score") or 0) > 70 for r in listings):
         return True
@@ -51,12 +52,15 @@ def send_summary(
     csv_path: Path | str | None = None,
     force: bool = False,
     new_vins: set[str] | None = None,
+    email_to: list[str] | None = None,
+    profile_label: str = "Carvana Tracker",
 ) -> bool:
     """
     Send an HTML email summary via Mailjet with the CSV attached.
 
     Returns True on success, False on failure or if conditions not met.
     Only sends when SEND_EMAIL=True (or force=True).
+    email_to specifies the recipients for this profile's email.
     """
     if not config.SEND_EMAIL and not force:
         log.debug("Email skipped (SEND_EMAIL=False)")
@@ -66,10 +70,16 @@ def send_summary(
         log.warning("Email not sent — Mailjet credentials or recipients not configured")
         return False
 
-    subject = _build_subject(listings, price_drops)
-    html    = _build_html(listings, llm_result, price_drops, trends or {}, new_vins or set())
+    recipients_list = email_to or []
+    if not recipients_list:
+        log.warning("Email not sent — no recipients configured")
+        return False
 
-    recipients = [{"Email": addr} for addr in config.EMAIL_TO]
+    subject = _build_subject(listings, price_drops, profile_label)
+    html    = _build_html(listings, llm_result, price_drops, trends or {}, new_vins or set(),
+                          profile_label)
+
+    recipients = [{"Email": addr} for addr in recipients_list]
 
     message: dict = {
         "From":     {"Email": config.EMAIL_FROM, "Name": config.EMAIL_FROM_NAME},
@@ -102,7 +112,7 @@ def send_summary(
             timeout=15,
         )
         resp.raise_for_status()
-        log.info("Email sent to %d recipient(s) via Mailjet", len(config.EMAIL_TO))
+        log.info("Email sent to %d recipient(s) via Mailjet", len(recipients))
         return True
     except requests.HTTPError as exc:
         body = resp.text[:300] if resp is not None else ""
@@ -119,11 +129,14 @@ def _is_configured() -> bool:
         config.MAILJET_API_KEY
         and config.MAILJET_SECRET_KEY
         and config.EMAIL_FROM
-        and config.EMAIL_TO
     )
 
 
-def _build_subject(listings: list[dict], price_drops: list[dict]) -> str:
+def _build_subject(
+    listings: list[dict],
+    price_drops: list[dict],
+    profile_label: str = "Carvana Tracker",
+) -> str:
     n    = len(listings)
     top  = listings[0] if listings else None
     drops = len(price_drops)
@@ -133,8 +146,8 @@ def _build_subject(listings: list[dict], price_drops: list[dict]) -> str:
             f"— ${top.get('price', 0):,.0f}"
         )
         drop_str = f" | {drops} price drop{'s' if drops != 1 else ''}" if drops else ""
-        return f"Carvana Tracker | {top_label}{drop_str} | {n} listings"
-    return f"Carvana Tracker — {n} listings"
+        return f"{profile_label} | {top_label}{drop_str} | {n} listings"
+    return f"{profile_label} — {n} listings"
 
 
 def _build_html(
@@ -143,6 +156,7 @@ def _build_html(
     price_drops: list[dict],
     trends: dict,
     new_vins: set[str] | None = None,
+    profile_label: str = "Carvana Tracker",
 ) -> str:
     run_time = datetime.now().strftime("%b %d, %Y %I:%M %p")
     top10    = listings[:10]
@@ -158,7 +172,7 @@ def _build_html(
 
     parts = [
         "<html><body style='font-family:sans-serif;max-width:880px;margin:auto;color:#222;line-height:1.5'>",
-        f"<h2 style='margin-bottom:4px'>Carvana SUV Tracker — {run_time}</h2>",
+        f"<h2 style='margin-bottom:4px'>{profile_label} — {run_time}</h2>",
         f"<p style='color:#555;margin-top:0'>Found <b>{len(listings)}</b> listings matching your filters.</p>",
     ]
 

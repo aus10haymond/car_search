@@ -36,13 +36,19 @@ _MODEL_PREFERENCE_BONUS: dict[str, float] = {
 
 # ── Filtering ─────────────────────────────────────────────────────────────────
 
-def apply_filters(listings: list[dict]) -> list[dict]:
+def apply_filters(
+    listings: list[dict],
+    max_price: int,
+    max_mileage: int,
+    min_year: int,
+    max_year: int,
+) -> list[dict]:
     """
     Remove listings that:
     - have no price
-    - exceed MAX_PRICE
-    - exceed MAX_MILEAGE
-    - are outside MIN_YEAR / MAX_YEAR range
+    - exceed max_price
+    - exceed max_mileage
+    - are outside min_year / max_year range
     Logs how many were removed and why.
     """
     removed = defaultdict(int)
@@ -56,16 +62,16 @@ def apply_filters(listings: list[dict]) -> list[dict]:
         if not price or price <= 0:
             removed["no_price"] += 1
             continue
-        if price > config.MAX_PRICE:
+        if price > max_price:
             removed["over_price"] += 1
             continue
-        if mileage is not None and mileage > config.MAX_MILEAGE:
+        if mileage is not None and mileage > max_mileage:
             removed["over_mileage"] += 1
             continue
-        if year is not None and year < config.MIN_YEAR:
+        if year is not None and year < min_year:
             removed["under_year"] += 1
             continue
-        if year is not None and year > config.MAX_YEAR:
+        if year is not None and year > max_year:
             removed["over_year"] += 1
             continue
 
@@ -86,7 +92,7 @@ def apply_filters(listings: list[dict]) -> list[dict]:
 
 # ── Enrichment ────────────────────────────────────────────────────────────────
 
-def enrich_listings(listings: list[dict]) -> list[dict]:
+def enrich_listings(listings: list[dict], max_year: int, max_mileage: int = 80000) -> list[dict]:
     """
     Enrich all listings in-place, computing value scores that require
     group averages across the full dataset first.
@@ -95,9 +101,8 @@ def enrich_listings(listings: list[dict]) -> list[dict]:
     # Compute group average prices first (needed for price score component)
     group_averages = _compute_group_averages(listings)
 
-    current_year = config.MAX_YEAR  # treat config max as 'current' for scoring
     enriched = [
-        enrich_listing(listing, group_averages, current_year)
+        enrich_listing(listing, group_averages, current_year=max_year, max_mileage=max_mileage)
         for listing in listings
     ]
     return enriched
@@ -107,6 +112,7 @@ def enrich_listing(
     listing: dict,
     group_averages: dict | None = None,
     current_year: int = _SCORE_MAX_YEAR,
+    max_mileage: int = 80000,
 ) -> dict:
     """
     Add computed fields to a listing dict:
@@ -134,7 +140,7 @@ def enrich_listing(
     listing["is_hybrid"]           = _is_hybrid(trim)
     listing["age_years"]           = (current_year - year) if year else None
     listing["value_score"]         = _value_score(
-        listing, group_averages or {}, current_year
+        listing, group_averages or {}, current_year, max_mileage
     )
     return listing
 
@@ -145,6 +151,7 @@ def _value_score(
     listing: dict,
     group_averages: dict,
     current_year: int,
+    max_mileage: int = 80000,
 ) -> float:
     """
     Produce a 0–100 score. Higher is better.
@@ -178,7 +185,7 @@ def _value_score(
     if mileage is None:
         mileage_score = 12.5  # neutral
     else:
-        mileage_score = max(0.0, 25.0 * (1 - mileage / config.MAX_MILEAGE))
+        mileage_score = max(0.0, 25.0 * (1 - mileage / max_mileage))
 
     # ── Age component (20 pts) ────────────────────────────────────────────────
     year_range = _SCORE_MAX_YEAR - _SCORE_MIN_YEAR  # 4

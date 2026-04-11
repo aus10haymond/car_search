@@ -27,7 +27,12 @@ class LLMResult:
 
 
 class LLMAnalyzer:
-    def __init__(self):
+    def __init__(
+        self,
+        reference_doc: str = "",
+        max_price: int = 0,
+        has_hybrid_interest: bool = False,
+    ):
         self.ollama = OllamaClient(
             base_url=config.OLLAMA_BASE_URL,
             model=config.OLLAMA_MODEL,
@@ -39,18 +44,9 @@ class LLMAnalyzer:
             max_tokens=config.ANTHROPIC_MAX_TOKENS,
         )
         self.backend_used: str | None = None
-
-        # Load the reference doc once at startup; pass to each backend call.
-        self._reference_doc: str = ""
-        try:
-            with open(config.REFERENCE_DOC_PATH, encoding="utf-8") as f:
-                self._reference_doc = f.read().strip()
-            if self._reference_doc:
-                log.info("Loaded reference doc from %s (%d chars)", config.REFERENCE_DOC_PATH, len(self._reference_doc))
-            else:
-                log.debug("Reference doc at %s is empty — skipping", config.REFERENCE_DOC_PATH)
-        except FileNotFoundError:
-            log.debug("No reference doc found at %s — proceeding without it", config.REFERENCE_DOC_PATH)
+        self._reference_doc   = reference_doc
+        self._max_price       = max_price
+        self._has_hybrid      = has_hybrid_interest
 
     def analyze(self, listings: list[dict]) -> LLMResult:
         """
@@ -150,13 +146,26 @@ class LLMAnalyzer:
         total_shown  = min(30, len(listings))
         top_listings = sorted(listings, key=lambda x: x.get("value_score") or 0, reverse=True)[:total_shown]
 
+        fuel_note = (
+            "They are particularly interested in hybrid trims."
+            if self._has_hybrid
+            else "They are open to all fuel types."
+        )
+        budget_str = f"${self._max_price:,}" if self._max_price else "their stated budget"
+        no_ref_note = (
+            "\nNo vehicle reference document is available for this search. "
+            "Evaluate listings based solely on the listing data provided."
+            if not self._reference_doc
+            else ""
+        )
         system_context = (
-            f"You are an automotive analyst helping a buyer find the best used SUV deal on Carvana.\n"
-            f"The buyer is located in Phoenix, AZ. Their budget is ${config.MAX_PRICE:,}.\n"
-            f"They are interested in hybrid trims. They plan to finance with ${config.DOWN_PAYMENT:,} down,\n"
+            f"You are an automotive analyst helping a buyer find the best used vehicle deal on Carvana.\n"
+            f"The buyer is located in Phoenix, AZ. Their budget is {budget_str}.\n"
+            f"{fuel_note} They plan to finance with ${config.DOWN_PAYMENT:,} down,\n"
             f"at {config.INTEREST_RATE}% APR over {config.LOAN_TERM_MONTHS} months.\n"
             f"Analyze the listings below and provide a clear, practical recommendation.\n"
             f"Do not speculate beyond the data provided. Flag any data that looks unusual."
+            f"{no_ref_note}"
         )
 
         header = (

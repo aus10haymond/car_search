@@ -3,28 +3,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Vehicles ──────────────────────────────────────────────────────────────────
-VEHICLES = [
-    # (make, model, min_year, max_year)
-    ("Honda",  "CR-V",     2021, 2025),
-    ("Toyota", "RAV4",     2021, 2025),
-    ("Subaru", "Forester", 2021, 2025),
-    ("Kia",    "Sportage", 2023, 2025),
-]
-
-# ── Filters ───────────────────────────────────────────────────────────────────
-MAX_PRICE    = 30000
-MAX_MILEAGE  = 80000
-MIN_YEAR     = 2021
-MAX_YEAR     = 2025
-# Set to "Hybrid" to filter Carvana search results to hybrid vehicles only.
-# Set to None to include all fuel types (gas + hybrid).
-# List of fuel type searches to run per vehicle. Each entry triggers a separate
-# Carvana search. Results are merged and deduplicated by VIN.
-# Use [] or [None] for a single unfiltered search.
-# Carvana values: "Hybrid", "Gas" (or try "Gasoline" if Gas yields nothing)
-FUEL_TYPE_FILTERS: list[str | None] = ["Hybrid", "Gas"]
-
 # ── Location ──────────────────────────────────────────────────────────────────
 ZIP_CODE = "85286"   # Phoenix, AZ — used by Carvana for shipping estimates
 
@@ -56,16 +34,11 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_MODEL    = "gemma3:4b"
 OLLAMA_TIMEOUT  = 300               # seconds
 
-# ── Alerts ────────────────────────────────────────────────────────────────────
-ALERT_PRICE_THRESHOLD = 30000
-ALERT_HYBRID_ONLY     = False
-
 # ── Email — Mailjet (optional) ────────────────────────────────────────────────
+# Recipients are configured per-profile in profiles.yaml.
 SEND_EMAIL          = True
 EMAIL_FROM          = os.getenv("EMAIL_FROM", "")           # Verified sender address
 EMAIL_FROM_NAME     = os.getenv("EMAIL_FROM_NAME", "Carvana Tracker")
-# Comma-separated list of recipient addresses, e.g. "a@gmail.com,b@gmail.com"
-EMAIL_TO            = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
 MAILJET_API_KEY     = os.getenv("MAILJET_API_KEY", "")
 MAILJET_SECRET_KEY  = os.getenv("MAILJET_SECRET_KEY", "")
 

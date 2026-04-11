@@ -1,0 +1,51 @@
+# Carvana Tracker — Search Profiles
+#
+# Each profile runs an independent search and sends results to its own recipients.
+# Add as many profiles as needed. Each must have a unique profile_id.
+#
+# Required fields per profile:
+#   profile_id        — short slug used internally (letters, numbers, underscores)
+#   label             — display name shown in email subject and body
+#   vehicles          — list of [make, model] pairs to search
+#   max_price         — upper price limit in dollars
+#   max_mileage       — upper mileage limit
+#   min_year          — earliest model year to include
+#   max_year          — latest model year to include
+#   email_to          — list of recipient email addresses
+#
+# Optional fields:
+#   fuel_type_filters — list of fuel types to search: Hybrid, Gas, or null (all).
+#                       Defaults to [null] (no fuel filter) if omitted.
+#   reference_doc_path — path to a markdown file with vehicle context for the LLM.
+#                        Falls back to the global REFERENCE_DOC_PATH in config if omitted.
+
+profiles:
+  - profile_id: mine
+    label: "My SUV Search"
+    vehicles:
+      - [Honda, CR-V]
+      - [Toyota, RAV4]
+      - [Subaru, Forester]
+      - [Kia, Sportage]
+    max_price: 30000
+    max_mileage: 80000
+    min_year: 2021
+    max_year: 2025
+    fuel_type_filters: [Hybrid, Gas]
+    email_to:
+      - your-email@example.com   # replace with your actual address
+
+  # Example second profile — uncomment and fill in to add another search
+  # - profile_id: johns_search
+  #   label: "John's Truck Hunt"
+  #   vehicles:
+  #     - [Ford, F-150]
+  #     - [Toyota, Tacoma]
+  #   max_price: 40000
+  #   max_mileage: 60000
+  #   min_year: 2022
+  #   max_year: 2025
+  #   fuel_type_filters: [Gas]
+  #   email_to:
+  #     - john@example.com
+  #   reference_doc_path: ./TRUCK_REFERENCE_CONTEXT.md

@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE TABLE IF NOT EXISTS listings (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id            TEXT NOT NULL REFERENCES runs(run_id),
+    profile_id        TEXT NOT NULL DEFAULT 'default',
     vin               TEXT,
     scraped_at        TEXT,
     year              INTEGER,
@@ -67,7 +68,7 @@ CREATE TABLE IF NOT EXISTS listings (
     value_score       REAL,
     is_hybrid         INTEGER,
     url               TEXT,
-    UNIQUE(run_id, vin)
+    UNIQUE(run_id, vin, profile_id)
 );
 
 CREATE TABLE IF NOT EXISTS price_history (
@@ -91,10 +92,56 @@ def _connect() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Create tables if they don't exist."""
+    """Create tables if they don't exist, and migrate schema if needed."""
     with _connect() as conn:
         conn.executescript(_DDL)
+        _migrate_listings_profile_id(conn)
     log.debug("Database initialised at %s", config.DB_PATH)
+
+
+def _migrate_listings_profile_id(conn: sqlite3.Connection) -> None:
+    """
+    Add profile_id to listings and update the UNIQUE constraint if not already present.
+    SQLite cannot drop/modify constraints, so this rebuilds the table in place.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(listings)").fetchall()}
+    if "profile_id" in cols:
+        return  # already migrated
+
+    log.info("Migrating listings table: adding profile_id column")
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS listings_new (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id            TEXT NOT NULL REFERENCES runs(run_id),
+            profile_id        TEXT NOT NULL DEFAULT 'default',
+            vin               TEXT,
+            scraped_at        TEXT,
+            year              INTEGER,
+            make              TEXT,
+            model             TEXT,
+            trim              TEXT,
+            price             REAL,
+            mileage           INTEGER,
+            monthly_estimated REAL,
+            shipping          REAL,
+            value_score       REAL,
+            is_hybrid         INTEGER,
+            url               TEXT,
+            UNIQUE(run_id, vin, profile_id)
+        );
+
+        INSERT INTO listings_new
+            (run_id, profile_id, vin, scraped_at, year, make, model, trim,
+             price, mileage, monthly_estimated, shipping, value_score, is_hybrid, url)
+        SELECT run_id, 'default', vin, scraped_at, year, make, model, trim,
+               price, mileage, monthly_estimated, shipping, value_score, is_hybrid, url
+        FROM listings;
+
+        DROP TABLE listings;
+
+        ALTER TABLE listings_new RENAME TO listings;
+    """)
+    log.info("Listings table migration complete — existing rows tagged as profile 'default'")
 
 
 # ── Write operations ──────────────────────────────────────────────────────────
@@ -114,10 +161,12 @@ def save_run(run: RunRecord) -> None:
     log.debug("Run %s saved to DB", run.run_id)
 
 
-def save_listings(listings: list[dict], run_id: str) -> None:
+def save_listings(listings: list[dict], run_id: str, profile_id: str = "default") -> None:
     """
     Insert listings into the listings and price_history tables.
-    Duplicate (run_id, vin) pairs are silently ignored.
+    Duplicate (run_id, vin, profile_id) triples are silently ignored.
+    price_history uses (vin, run_id) as its key — if two profiles scrape the same
+    VIN in the same run the second insert is silently ignored (price is identical).
     """
     run_at = _get_run_at(run_id)
 
@@ -128,6 +177,7 @@ def save_listings(listings: list[dict], run_id: str) -> None:
         vin = listing.get("vin") or ""
         listing_rows.append((
             run_id,
+            profile_id,
             vin,
             listing.get("scraped_at", ""),
             listing.get("year"),
@@ -148,9 +198,9 @@ def save_listings(listings: list[dict], run_id: str) -> None:
     with _connect() as conn:
         conn.executemany(
             """INSERT OR IGNORE INTO listings
-               (run_id, vin, scraped_at, year, make, model, trim, price, mileage,
+               (run_id, profile_id, vin, scraped_at, year, make, model, trim, price, mileage,
                 monthly_estimated, shipping, value_score, is_hybrid, url)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             listing_rows,
         )
         if price_rows:
@@ -160,7 +210,7 @@ def save_listings(listings: list[dict], run_id: str) -> None:
                 price_rows,
             )
 
-    log.debug("Saved %d listings to DB for run %s", len(listings), run_id)
+    log.debug("Saved %d listings to DB for run %s (profile=%s)", len(listings), run_id, profile_id)
 
 
 # ── Read operations ───────────────────────────────────────────────────────────
@@ -175,15 +225,16 @@ def get_price_history(vin: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def get_new_listings(current_vins: set[str]) -> set[str]:
-    """Return VINs in current_vins that have never appeared in the DB before."""
+def get_new_listings(current_vins: set[str], profile_id: str = "default") -> set[str]:
+    """Return VINs in current_vins that have never appeared for this profile before."""
     if not current_vins:
         return set()
     with _connect() as conn:
         placeholders = ",".join("?" * len(current_vins))
         known = conn.execute(
-            f"SELECT DISTINCT vin FROM listings WHERE vin IN ({placeholders})",
-            list(current_vins),
+            f"SELECT DISTINCT vin FROM listings "
+            f"WHERE vin IN ({placeholders}) AND profile_id = ?",
+            list(current_vins) + [profile_id],
         ).fetchall()
     known_vins = {row["vin"] for row in known}
     return current_vins - known_vins
