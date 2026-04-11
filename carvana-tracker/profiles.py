@@ -31,6 +31,7 @@ class SearchProfile:
     max_year:           int
     email_to:           list[str]
     fuel_type_filters:  list[str | None] = field(default_factory=lambda: [None])
+    model_preference:   list[str] = field(default_factory=list)  # ordered best→worst; [] = no preference
     reference_doc_path: Optional[str] = None
 
 
@@ -99,6 +100,9 @@ def load_profiles(path: str) -> list[SearchProfile]:
                 for f in fuel_raw
             ]
 
+        model_pref_raw = raw.get("model_preference") or []
+        model_preference = [str(m) for m in model_pref_raw]
+
         profiles.append(SearchProfile(
             profile_id=pid,
             label=str(raw["label"]),
@@ -109,6 +113,7 @@ def load_profiles(path: str) -> list[SearchProfile]:
             max_year=int(raw["max_year"]),
             email_to=email_to,
             fuel_type_filters=fuel_type_filters,
+            model_preference=model_preference,
             reference_doc_path=raw.get("reference_doc_path"),
         ))
 

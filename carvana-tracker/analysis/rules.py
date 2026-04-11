@@ -18,20 +18,9 @@ log = logging.getLogger(__name__)
 
 _HYBRID_KEYWORDS = {"hybrid", "hev", "phev", "prime"}
 
-# Year range used for the age score component
+# Default year bounds used only as fallback in enrich_listing when called without profile context.
 _SCORE_MIN_YEAR = 2021
 _SCORE_MAX_YEAR = 2025
-
-# Model preference order (best → worst). Used for sorting and score bonus.
-MODEL_PREFERENCE_ORDER = ["CR-V", "RAV4", "Forester", "Sportage"]
-
-# Bonus points added to value_score for each model (spread = 6 pts).
-_MODEL_PREFERENCE_BONUS: dict[str, float] = {
-    "CR-V":     6.0,
-    "RAV4":     4.0,
-    "Forester": 2.0,
-    "Sportage": 0.0,
-}
 
 
 # ── Filtering ─────────────────────────────────────────────────────────────────
@@ -92,17 +81,30 @@ def apply_filters(
 
 # ── Enrichment ────────────────────────────────────────────────────────────────
 
-def enrich_listings(listings: list[dict], max_year: int, max_mileage: int = 80000) -> list[dict]:
+def enrich_listings(
+    listings: list[dict],
+    max_year: int,
+    max_mileage: int = 80000,
+    min_year: int = _SCORE_MIN_YEAR,
+    model_preference: list[str] | None = None,
+    hybrid_bonus: bool = True,
+) -> list[dict]:
     """
     Enrich all listings in-place, computing value scores that require
     group averages across the full dataset first.
     Returns the same list (mutated).
     """
-    # Compute group average prices first (needed for price score component)
     group_averages = _compute_group_averages(listings)
 
     enriched = [
-        enrich_listing(listing, group_averages, current_year=max_year, max_mileage=max_mileage)
+        enrich_listing(
+            listing, group_averages,
+            current_year=max_year,
+            max_mileage=max_mileage,
+            min_year=min_year,
+            model_preference=model_preference or [],
+            hybrid_bonus=hybrid_bonus,
+        )
         for listing in listings
     ]
     return enriched
@@ -113,6 +115,9 @@ def enrich_listing(
     group_averages: dict | None = None,
     current_year: int = _SCORE_MAX_YEAR,
     max_mileage: int = 80000,
+    min_year: int = _SCORE_MIN_YEAR,
+    model_preference: list[str] | None = None,
+    hybrid_bonus: bool = True,
 ) -> dict:
     """
     Add computed fields to a listing dict:
@@ -140,7 +145,10 @@ def enrich_listing(
     listing["is_hybrid"]           = _is_hybrid(trim)
     listing["age_years"]           = (current_year - year) if year else None
     listing["value_score"]         = _value_score(
-        listing, group_averages or {}, current_year, max_mileage
+        listing, group_averages or {}, current_year, max_mileage,
+        min_year=min_year,
+        model_preference=model_preference or [],
+        hybrid_bonus=hybrid_bonus,
     )
     return listing
 
@@ -152,17 +160,20 @@ def _value_score(
     group_averages: dict,
     current_year: int,
     max_mileage: int = 80000,
+    min_year: int = _SCORE_MIN_YEAR,
+    model_preference: list[str] | None = None,
+    hybrid_bonus: bool = True,
 ) -> float:
     """
     Produce a 0–100 score. Higher is better.
 
-    Components (base weights sum to 100, plus model preference bonus):
+    Components (base weights sum to 100, plus optional model preference bonus):
       35 — price vs group average (same make/model/year)
-      25 — mileage (inverse linear, 0→25pts, 80k→0pts)
-      20 — age (newer = better, MAX_YEAR→20pts, MIN_YEAR→0pts)
-      10 — hybrid bonus
+      25 — mileage (inverse linear, 0→25pts, max_mileage→0pts)
+      20 — age (newer = better, max_year→20pts, min_year→0pts)
+      10 — hybrid bonus (only when hybrid_bonus=True)
       10 — shipping penalty (0/None→10pts, $1500+→0pts)
-       6 — model preference bonus (CR-V=6, RAV4=4, Forester=2, Sportage=0)
+       6 — model preference bonus (auto-spread across model_preference order)
     """
     price    = listing.get("price") or 0.0
     mileage  = listing.get("mileage")
@@ -173,10 +184,8 @@ def _value_score(
     group_key = (listing.get("make"), listing.get("model"), year)
     avg_price = group_averages.get(group_key)
     if avg_price and avg_price > 0:
-        # Positive pct_diff means this listing is CHEAPER than average
         pct_diff = (avg_price - price) / avg_price * 100
-        pct_diff = max(-30.0, min(30.0, pct_diff))   # cap ±30%
-        # Map [-30, +30] → [0, 35]
+        pct_diff = max(-30.0, min(30.0, pct_diff))
         price_score = ((pct_diff + 30) / 60) * 35
     else:
         price_score = 17.5  # neutral when no group data
@@ -187,16 +196,16 @@ def _value_score(
     else:
         mileage_score = max(0.0, 25.0 * (1 - mileage / max_mileage))
 
-    # ── Age component (20 pts) ────────────────────────────────────────────────
-    year_range = _SCORE_MAX_YEAR - _SCORE_MIN_YEAR  # 4
+    # ── Age component (20 pts) — uses profile's year range as floor/ceiling ──
+    year_range = max(1, current_year - min_year)
     if year is None:
         age_score = 10.0
     else:
-        clamped = max(_SCORE_MIN_YEAR, min(_SCORE_MAX_YEAR, year))
-        age_score = ((clamped - _SCORE_MIN_YEAR) / year_range) * 20
+        clamped = max(min_year, min(current_year, year))
+        age_score = ((clamped - min_year) / year_range) * 20
 
-    # ── Hybrid bonus (10 pts) ─────────────────────────────────────────────────
-    hybrid_score = 10.0 if listing.get("is_hybrid") else 0.0
+    # ── Hybrid bonus (10 pts, optional) ──────────────────────────────────────
+    hybrid_score = (10.0 if listing.get("is_hybrid") else 0.0) if hybrid_bonus else 0.0
 
     # ── Shipping penalty (10 pts) ─────────────────────────────────────────────
     if shipping is None or shipping <= 0:
@@ -204,11 +213,27 @@ def _value_score(
     else:
         shipping_score = max(0.0, 10.0 * (1 - shipping / 1500))
 
-    # ── Model preference bonus (up to 6 pts) ─────────────────────────────────
-    model_score = _MODEL_PREFERENCE_BONUS.get(listing.get("model") or "", 0.0)
+    # ── Model preference bonus (up to 6 pts, auto-spread by rank) ────────────
+    model_score = _model_preference_bonus(listing.get("model") or "", model_preference or [])
 
     total = price_score + mileage_score + age_score + hybrid_score + shipping_score + model_score
     return round(min(100.0, max(0.0, total)), 2)
+
+
+def _model_preference_bonus(model: str, preference_order: list[str], max_bonus: float = 6.0) -> float:
+    """
+    Compute a 0–max_bonus score based on where model ranks in preference_order.
+    First model = max_bonus, last = 0, evenly spread. Unknown models = 0.
+    Empty preference list = 0 for all (no bias).
+    """
+    n = len(preference_order)
+    if n <= 1:
+        return 0.0
+    try:
+        rank = preference_order.index(model)
+        return max_bonus * (n - 1 - rank) / (n - 1)
+    except ValueError:
+        return 0.0
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

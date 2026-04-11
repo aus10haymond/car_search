@@ -14,8 +14,10 @@
 #   email_to          — list of recipient email addresses
 #
 # Optional fields:
-#   fuel_type_filters — list of fuel types to search: Hybrid, Gas, or null (all).
-#                       Defaults to [null] (no fuel filter) if omitted.
+#   fuel_type_filters  — list of fuel types to search: Hybrid, Gas, or null (all).
+#                        Defaults to [null] (no fuel filter) if omitted.
+#   model_preference   — models listed best→worst; drives sort order and score bonus.
+#                        Omit for no preference (pure value-score ranking).
 #   reference_doc_path — path to a markdown file with vehicle context for the LLM.
 #                        If omitted, the LLM evaluates on listing data alone.
 
@@ -32,6 +34,7 @@ profiles:
     min_year: 2021
     max_year: 2025
     fuel_type_filters: [Hybrid, Gas]
+    model_preference: [CR-V, RAV4, Forester, Sportage]
     reference_doc_path: ./SUV_REFERENCE_CONTEXT.md
     email_to:
       - austen.haymond@gmail.com
@@ -41,11 +44,11 @@ profiles:
     label: "Choppa's Ride Search"
     vehicles:
       - [Toyota, Grand Highlander]
-    max_price: 40000
+    max_price: null
     max_mileage: 50000
     min_year: 2024
     max_year: 2026
     fuel_type_filters: [Hybrid]
     email_to:
-      - john@example.com
+      - azhaymond@gmail.com
     reference_doc_path: ./GRAND_HIGHLANDER_HYBRID_REFERENCE_CONTEXT.md

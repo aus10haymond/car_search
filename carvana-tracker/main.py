@@ -33,7 +33,7 @@ from utils.logging_config import setup_logging, start_run_log, end_run_log
 from scraper.urls import build_search_url
 from scraper.browser import Browser
 from scraper.extractor import extract_listings
-from analysis.rules import apply_filters, enrich_listings, MODEL_PREFERENCE_ORDER
+from analysis.rules import apply_filters, enrich_listings
 from analysis.llm import LLMAnalyzer, LLMResult
 from storage.csv_writer import write_results
 from storage import history_db
@@ -123,19 +123,26 @@ def _run_profile(
 
         # ── Phase 4: Enrich + score ───────────────────────────────────────────
         log.info("--- PHASE 4: ENRICHMENT & SCORING ---")
-        enriched = enrich_listings(filtered, max_year=profile.max_year,
-                                   max_mileage=profile.max_mileage)
-        _n = len(MODEL_PREFERENCE_ORDER)
+        has_hybrid_interest = any(f == "Hybrid" for f in (profile.fuel_type_filters or []))
+        enriched = enrich_listings(
+            filtered,
+            max_year=profile.max_year,
+            max_mileage=profile.max_mileage,
+            min_year=profile.min_year,
+            model_preference=profile.model_preference,
+            hybrid_bonus=has_hybrid_interest,
+        )
+        _pref = profile.model_preference
+        _n    = len(_pref)
         enriched.sort(key=lambda x: (
-            MODEL_PREFERENCE_ORDER.index(x["model"]) if x.get("model") in MODEL_PREFERENCE_ORDER else _n,
+            _pref.index(x["model"]) if x.get("model") in _pref else _n,
             -(x.get("value_score") or 0),
         ))
         _log_enrichment_summary(enriched)
 
         # ── Phase 5: LLM analysis ─────────────────────────────────────────────
         log.info("--- PHASE 5: LLM ANALYSIS ---")
-        reference_doc       = resolve_reference_doc(profile)
-        has_hybrid_interest = any(f == "Hybrid" for f in (profile.fuel_type_filters or []))
+        reference_doc = resolve_reference_doc(profile)
         llm_result = _run_llm(
             enriched, skip_llm, force_backend,
             reference_doc=reference_doc,
