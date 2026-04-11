@@ -38,7 +38,7 @@ _MODEL_PREFERENCE_BONUS: dict[str, float] = {
 
 def apply_filters(
     listings: list[dict],
-    max_price: int,
+    max_price: int | None,
     max_mileage: int,
     min_year: int,
     max_year: int,
@@ -62,7 +62,7 @@ def apply_filters(
         if not price or price <= 0:
             removed["no_price"] += 1
             continue
-        if price > max_price:
+        if max_price is not None and price > max_price:
             removed["over_price"] += 1
             continue
         if mileage is not None and mileage > max_mileage:

@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 _REQUIRED_FIELDS = {
     "profile_id", "label", "vehicles",
-    "max_price", "max_mileage", "min_year", "max_year", "email_to",
+    "max_mileage", "min_year", "max_year", "email_to",
 }
 
 
@@ -25,7 +25,7 @@ class SearchProfile:
     profile_id:         str
     label:              str
     vehicles:           list[tuple[str, str]]   # [(make, model), ...]
-    max_price:          int
+    max_price:          Optional[int]   # None = no upper price limit
     max_mileage:        int
     min_year:           int
     max_year:           int
@@ -103,7 +103,7 @@ def load_profiles(path: str) -> list[SearchProfile]:
             profile_id=pid,
             label=str(raw["label"]),
             vehicles=vehicles,
-            max_price=int(raw["max_price"]),
+            max_price=int(raw["max_price"]) if raw.get("max_price") is not None else None,
             max_mileage=int(raw["max_mileage"]),
             min_year=int(raw["min_year"]),
             max_year=int(raw["max_year"]),
