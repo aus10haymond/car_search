@@ -175,21 +175,20 @@ class LLMAnalyzer:
         )
 
         # Build markdown table
-        table_header = "| Year | Make | Model | Trim | Price | Mileage | Est. Payment | Shipping | Value Score | Hybrid |"
-        table_sep    = "|------|------|-------|------|-------|---------|--------------|----------|-------------|--------|"
+        table_header = "| Year | Make | Model | Trim | Price | Mileage | Est. Payment | Value Score | Hybrid |"
+        table_sep    = "|------|------|-------|------|-------|---------|--------------|-------------|--------|"
         table_rows   = []
         for r in top_listings:
-            trim     = (r.get("trim") or "")
+            trim    = (r.get("trim") or "")
             if r.get("is_hybrid"):
                 trim = f"[HYBRID] {trim}"
-            price    = f"${round(r.get('price') or 0):,}"
-            mileage  = f"{round((r.get('mileage') or 0) / 100) * 100:,}"
-            payment  = f"${r.get('monthly_estimated') or 0:,.0f}/mo"
-            shipping = f"${r.get('shipping'):,.0f}" if r.get("shipping") else "N/A"
-            score    = int(r.get("value_score") or 0)
+            price   = f"${round(r.get('price') or 0):,}"
+            mileage = f"{round((r.get('mileage') or 0) / 100) * 100:,}"
+            payment = f"${r.get('monthly_carvana') or r.get('monthly_estimated') or 0:,.0f}/mo"
+            score   = int(r.get("value_score") or 0)
             table_rows.append(
                 f"| {r.get('year')} | {r.get('make')} | {r.get('model')} | {trim} "
-                f"| {price} | {mileage} | {payment} | {shipping} | {score} | {'Yes' if r.get('is_hybrid') else 'No'} |"
+                f"| {price} | {mileage} | {payment} | {score} | {'Yes' if r.get('is_hybrid') else 'No'} |"
             )
 
         table = "\n".join([table_header, table_sep] + table_rows)

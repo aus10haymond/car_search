@@ -64,7 +64,6 @@ CREATE TABLE IF NOT EXISTS listings (
     price             REAL,
     mileage           INTEGER,
     monthly_estimated REAL,
-    shipping          REAL,
     value_score       REAL,
     is_hybrid         INTEGER,
     url               TEXT,
@@ -96,7 +95,17 @@ def init_db() -> None:
     with _connect() as conn:
         conn.executescript(_DDL)
         _migrate_listings_profile_id(conn)
+        _migrate_drop_shipping(conn)
     log.debug("Database initialised at %s", config.DB_PATH)
+
+
+def _migrate_drop_shipping(conn: sqlite3.Connection) -> None:
+    """Drop the shipping column from listings if it still exists."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(listings)").fetchall()}
+    if "shipping" not in cols:
+        return
+    log.info("Migrating listings table: dropping shipping column")
+    conn.execute("ALTER TABLE listings DROP COLUMN shipping")
 
 
 def _migrate_listings_profile_id(conn: sqlite3.Connection) -> None:
@@ -123,7 +132,6 @@ def _migrate_listings_profile_id(conn: sqlite3.Connection) -> None:
             price             REAL,
             mileage           INTEGER,
             monthly_estimated REAL,
-            shipping          REAL,
             value_score       REAL,
             is_hybrid         INTEGER,
             url               TEXT,
@@ -132,9 +140,9 @@ def _migrate_listings_profile_id(conn: sqlite3.Connection) -> None:
 
         INSERT INTO listings_new
             (run_id, profile_id, vin, scraped_at, year, make, model, trim,
-             price, mileage, monthly_estimated, shipping, value_score, is_hybrid, url)
+             price, mileage, monthly_estimated, value_score, is_hybrid, url)
         SELECT run_id, 'default', vin, scraped_at, year, make, model, trim,
-               price, mileage, monthly_estimated, shipping, value_score, is_hybrid, url
+               price, mileage, monthly_estimated, value_score, is_hybrid, url
         FROM listings;
 
         DROP TABLE listings;
@@ -187,7 +195,6 @@ def save_listings(listings: list[dict], run_id: str, profile_id: str = "default"
             listing.get("price"),
             listing.get("mileage"),
             listing.get("monthly_estimated"),
-            listing.get("shipping"),
             listing.get("value_score"),
             int(bool(listing.get("is_hybrid", False))),
             listing.get("url", ""),
@@ -199,8 +206,8 @@ def save_listings(listings: list[dict], run_id: str, profile_id: str = "default"
         conn.executemany(
             """INSERT OR IGNORE INTO listings
                (run_id, profile_id, vin, scraped_at, year, make, model, trim, price, mileage,
-                monthly_estimated, shipping, value_score, is_hybrid, url)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                monthly_estimated, value_score, is_hybrid, url)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             listing_rows,
         )
         if price_rows:
@@ -305,9 +312,72 @@ def save_model_stats(listings: list[dict], run_id: str) -> None:
     log.debug("Saved model price stats for %d groups (run %s)", len(rows), run_id)
 
 
-def get_model_price_trends(days: int = 60) -> dict[str, list[dict]]:
+def backfill_model_stats() -> int:
+    """
+    Recompute model_price_stats for every run in the listings table that
+    doesn't already have a stats row. Returns the number of runs filled.
+    """
+    with _connect() as conn:
+        # Find all (run_id, make, model) combos in listings that have no stats row
+        missing = conn.execute(
+            """
+            SELECT l.run_id, l.make, l.model, r.run_at
+            FROM listings l
+            JOIN runs r ON l.run_id = r.run_id
+            WHERE l.price IS NOT NULL AND l.price > 0
+              AND NOT EXISTS (
+                  SELECT 1 FROM model_price_stats s
+                  WHERE s.run_id = l.run_id
+                    AND s.make   = l.make
+                    AND s.model  = l.model
+              )
+            GROUP BY l.run_id, l.make, l.model
+            """
+        ).fetchall()
+
+        if not missing:
+            return 0
+
+        # For each missing combo, pull all prices and compute stats
+        rows = []
+        for row in missing:
+            run_id, make, model, run_at = row["run_id"], row["make"], row["model"], row["run_at"]
+            prices_raw = conn.execute(
+                "SELECT price FROM listings WHERE run_id=? AND make=? AND model=? AND price > 0",
+                (run_id, make, model),
+            ).fetchall()
+            prices = sorted(p["price"] for p in prices_raw)
+            n = len(prices)
+            if n == 0:
+                continue
+            median = (prices[n // 2 - 1] + prices[n // 2]) / 2 if n % 2 == 0 else prices[n // 2]
+            rows.append((
+                run_id, run_at, make, model,
+                round(sum(prices) / n, 2),
+                round(median, 2),
+                round(min(prices), 2),
+                round(max(prices), 2),
+                n,
+            ))
+
+        conn.executemany(
+            """INSERT OR IGNORE INTO model_price_stats
+               (run_id, run_at, make, model, avg_price, med_price, min_price, max_price, count)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            rows,
+        )
+
+    return len(rows)
+
+
+def get_model_price_trends(
+    days: int = 60,
+    vehicles: list[tuple[str, str]] | None = None,
+) -> dict[str, list[dict]]:
     """
     Return price trend data for each make/model over the past `days` days.
+    If `vehicles` is provided (list of (make, model) tuples), only those
+    models are included — used to scope trends to a single profile.
 
     Returns a dict keyed by "Make Model" with a list of dicts:
         [{"date": "Apr 08", "avg": 30500, "min": 27990}, ...]
@@ -315,13 +385,24 @@ def get_model_price_trends(days: int = 60) -> dict[str, list[dict]]:
     """
     cutoff = _days_ago_iso(days)
     with _connect() as conn:
-        rows = conn.execute(
-            """SELECT make, model, run_at, avg_price, min_price
-               FROM model_price_stats
-               WHERE run_at >= ?
-               ORDER BY make, model, run_at""",
-            (cutoff,),
-        ).fetchall()
+        if vehicles:
+            placeholders = " OR ".join("(make=? AND model=?)" for _ in vehicles)
+            params: list = [cutoff] + [val for pair in vehicles for val in pair]
+            rows = conn.execute(
+                f"""SELECT make, model, run_at, avg_price, min_price
+                    FROM model_price_stats
+                    WHERE run_at >= ? AND ({placeholders})
+                    ORDER BY make, model, run_at""",
+                params,
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT make, model, run_at, avg_price, min_price
+                   FROM model_price_stats
+                   WHERE run_at >= ?
+                   ORDER BY make, model, run_at""",
+                (cutoff,),
+            ).fetchall()
 
     trends: dict[str, list[dict]] = {}
     for row in rows:

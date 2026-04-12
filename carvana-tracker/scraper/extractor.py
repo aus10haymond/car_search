@@ -267,18 +267,6 @@ def normalize_vehicle(raw: dict, make: str, model: str, strategy: str) -> dict |
             monthly = monthly.get("amount") or monthly.get("value")
         monthly = _to_float(monthly)
 
-        # ── shipping ──────────────────────────────────────────────────────────
-        shipping = (
-            raw.get("shippingFee")
-            or raw.get("deliveryFee")
-            or raw.get("transportationFee")
-            or raw.get("shipping")
-            or None
-        )
-        if isinstance(shipping, dict):
-            shipping = shipping.get("amount") or shipping.get("value")
-        shipping = _to_float(shipping)
-
         # ── URL ───────────────────────────────────────────────────────────────
         # Schema.org: offers.url  |  legacy: slug / vehicleUrl / url
         url = (
@@ -292,14 +280,12 @@ def normalize_vehicle(raw: dict, make: str, model: str, strategy: str) -> dict |
             url = f"https://www.carvana.com/vehicle/{url}"
 
         # ── colours ───────────────────────────────────────────────────────────
-        # Schema.org: color (exterior only; no interior in structured data)
         color_ext = (
             raw.get("exteriorColor")
             or raw.get("color")
             or raw.get("colorExterior")
             or ""
         )
-        color_int = raw.get("interiorColor") or raw.get("colorInterior") or ""
 
         log.debug(
             "Normalized via %s: %s %s %s %s — $%s",
@@ -315,9 +301,7 @@ def normalize_vehicle(raw: dict, make: str, model: str, strategy: str) -> dict |
             "price":                price,
             "mileage":              mileage,
             "monthly_carvana":      monthly,
-            "shipping":             shipping,
             "color_exterior":       str(color_ext).strip(),
-            "color_interior":       str(color_int).strip(),
             "url":                  url,
             "extraction_strategy":  strategy,
             "scraped_at":           datetime.now(timezone.utc).isoformat(),
@@ -330,11 +314,54 @@ def normalize_vehicle(raw: dict, make: str, model: str, strategy: str) -> dict |
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
+def _extract_monthly_from_dom(html: str) -> dict[str, float]:
+    """
+    Scrape Carvana's rendered monthly payment values from the search results page.
+
+    Carvana renders: <div data-testid="monthly-payment" ...>$893/mo</div>
+    inside each vehicle card. For each element, walk up the DOM tree to find
+    the nearest ancestor that contains a /vehicle/ link, and use the slug
+    from that URL as the key.
+
+    Returns a dict of vehicle URL slug → monthly payment (float).
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    elements = soup.select('[data-testid="monthly-payment"]')
+    if not elements:
+        log.debug("No [data-testid=monthly-payment] elements found in DOM")
+        return {}
+
+    result: dict[str, float] = {}
+    for el in elements:
+        val = _parse_price(el.get_text())
+        if val is None:
+            continue
+        # Walk up ancestors to find the card container that has a /vehicle/ link
+        slug = None
+        node = el.parent
+        for _ in range(12):  # cap traversal depth
+            if node is None:
+                break
+            link = node.find("a", href=lambda h: h and "/vehicle/" in h)
+            if link:
+                slug = str(link["href"]).rstrip("/").split("/")[-1].split("?")[0]
+                break
+            node = node.parent
+        if slug:
+            result[slug] = val
+
+    log.debug("DOM monthly payment map: %d slug→value entries", len(result))
+    return result
+
+
 def extract_listings(html: str, make: str, model: str) -> list[dict]:
     """
-    Try all three strategies in priority order.
+    Try all strategies in priority order.
     Returns normalized listings from the first strategy that yields results.
+    Always attempts a DOM pass to backfill Carvana's monthly payment figure.
     """
+    listings: list[dict] = []
+
     for strategy_fn, strategy_name in [
         (extract_from_schema_org,   "schema_org"),
         (extract_from_next_data,    "next_data"),
@@ -353,14 +380,35 @@ def extract_listings(html: str, make: str, model: str) -> list[dict]:
                     "Extracted %d listings via %s for %s %s",
                     len(valid), strategy_name, make, model,
                 )
-                return valid
+                listings = valid
+                break
             log.debug(
                 "%s returned %d raw records but 0 valid after normalization",
                 strategy_name, len(raw_list),
             )
 
-    log.warning("All extraction strategies failed for %s %s", make, model)
-    return []
+    if not listings:
+        log.warning("All extraction strategies failed for %s %s", make, model)
+        return []
+
+    # Backfill Carvana's monthly payment from the rendered DOM
+    if any(not v.get("monthly_carvana") for v in listings):
+        monthly_map = _extract_monthly_from_dom(html)
+        if monthly_map:
+            filled = 0
+            for listing in listings:
+                if listing.get("monthly_carvana"):
+                    continue
+                slug = (listing.get("url") or "").rstrip("/").split("/")[-1].split("?")[0]
+                if slug and slug in monthly_map:
+                    listing["monthly_carvana"] = monthly_map[slug]
+                    filled += 1
+            if filled:
+                log.info("Backfilled monthly_carvana for %d/%d listings from DOM", filled, len(listings))
+            else:
+                log.debug("DOM monthly map built but no slugs matched listing URLs")
+
+    return listings
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

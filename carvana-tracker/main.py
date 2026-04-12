@@ -116,6 +116,7 @@ def _run_profile(
             max_mileage=profile.max_mileage,
             min_year=profile.min_year,
             max_year=profile.max_year,
+            excluded_trim_keywords=profile.excluded_trim_keywords,
         )
         if not filtered:
             log.warning("No listings passed filters — profile complete with no output.")
@@ -191,7 +192,7 @@ def _run_profile(
         _print_summary(enriched)
         _print_llm_result(llm_result)
 
-        trends = history_db.get_model_price_trends(days=180)
+        trends = history_db.get_model_price_trends(days=180, vehicles=profile.vehicles)
         log.info("Price trend data: %d models, up to 180 days", len(trends))
 
         if no_email:
@@ -352,7 +353,7 @@ def _mark_alert_flags(
         price = listing.get("price") or 999999
         score = listing.get("value_score") or 0
         listing["is_alert"] = int(
-            (max_price > 0 and price < max_price)
+            (max_price is not None and max_price > 0 and price < max_price)
             or (vin in new_vins and score > 70)
             or vin in drop_by_vin
         )
@@ -367,8 +368,9 @@ def _log_run_header(run_id: str, run_at: str, dry_run: bool, profile: SearchProf
     log.info("  Run ID:  %s", run_id)
     log.info("  Dry run: %s", dry_run)
     log.debug("  Vehicles: %s", profile.vehicles)
-    log.debug("  Filters: max_price=$%d, max_mileage=%d, years=%d-%d",
-              profile.max_price, profile.max_mileage, profile.min_year, profile.max_year)
+    max_price_str = f"${profile.max_price:,}" if profile.max_price is not None else "none"
+    log.debug("  Filters: max_price=%s, max_mileage=%d, years=%d-%d",
+              max_price_str, profile.max_mileage, profile.min_year, profile.max_year)
     log.debug("  Ollama: %s (%s), Anthropic: %s (%s)",
               config.OLLAMA_ENABLED, config.OLLAMA_MODEL,
               config.ANTHROPIC_ENABLED, config.ANTHROPIC_MODEL)
@@ -611,14 +613,13 @@ def _print_summary(listings: list[dict]) -> None:
             (r.get("trim") or "")[:22],
             f"${r.get('price',0):,.0f}",
             f"{r.get('mileage'):,}" if r.get("mileage") else "N/A",
-            f"${r.get('monthly_estimated',0):,.0f}/mo",
-            f"${r.get('shipping'):,.0f}" if r.get("shipping") else "N/A",
+            f"${r.get('monthly_carvana') or r.get('monthly_estimated') or 0:,.0f}/mo",
             "Y" if r.get("is_hybrid") else "",
             f"{r.get('value_score', 0):.0f}",
         ])
 
     assert tabulate is not None
-    headers = ["Vehicle", "Trim", "Price", "Mileage", "Est. Payment", "Shipping", "Hybrid", "Score"]
+    headers = ["Vehicle", "Trim", "Price", "Mileage", "Est. Payment", "Hybrid", "Score"]
     print("\n" + tabulate(rows, headers=headers, tablefmt="rounded_outline"))
     print(
         f"\n  {len(listings)} listings | "
@@ -656,13 +657,24 @@ def main() -> None:
     parser.add_argument("--email",       action="store_true", help="Force email send this run")
     parser.add_argument("--no-email",    action="store_true", help="Suppress email this run even if SEND_EMAIL=True")
     parser.add_argument("--history",     action="store_true", help="Print run history and exit")
-    parser.add_argument("--check-setup", action="store_true", help="Validate config and test backends")
+    parser.add_argument("--check-setup",    action="store_true", help="Validate config and test backends")
+    parser.add_argument("--debug",          action="store_true", help="Show DEBUG messages on console")
+    parser.add_argument("--backfill-stats", action="store_true", help="Recompute price trend stats from existing DB listings and exit")
     args = parser.parse_args()
 
-    setup_logging(config.LOG_FILE)
+    setup_logging(config.LOG_FILE, console_debug=args.debug)
 
     if args.check_setup:
         check_setup()
+        return
+
+    if args.backfill_stats:
+        history_db.init_db()
+        filled = history_db.backfill_model_stats()
+        if filled:
+            log.info("Backfilled model price stats for %d run/model combinations", filled)
+        else:
+            log.info("Nothing to backfill — all runs already have stats")
         return
 
     if args.history:

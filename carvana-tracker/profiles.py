@@ -30,9 +30,10 @@ class SearchProfile:
     min_year:           int
     max_year:           int
     email_to:           list[str]
-    fuel_type_filters:  list[str | None] = field(default_factory=lambda: [None])
-    model_preference:   list[str] = field(default_factory=list)  # ordered best→worst; [] = no preference
-    reference_doc_path: Optional[str] = None
+    fuel_type_filters:        list[str | None] = field(default_factory=lambda: [None])
+    model_preference:         list[str] = field(default_factory=list)  # ordered best→worst; [] = no preference
+    reference_doc_path:       Optional[str] = None
+    excluded_trim_keywords:   list[str] = field(default_factory=list)  # case-insensitive substrings to drop
 
 
 def load_profiles(path: str) -> list[SearchProfile]:
@@ -103,6 +104,9 @@ def load_profiles(path: str) -> list[SearchProfile]:
         model_pref_raw = raw.get("model_preference") or []
         model_preference = [str(m) for m in model_pref_raw]
 
+        excluded_trim_raw = raw.get("excluded_trim_keywords") or []
+        excluded_trim_keywords = [str(k).lower() for k in excluded_trim_raw]
+
         profiles.append(SearchProfile(
             profile_id=pid,
             label=str(raw["label"]),
@@ -115,6 +119,7 @@ def load_profiles(path: str) -> list[SearchProfile]:
             fuel_type_filters=fuel_type_filters,
             model_preference=model_preference,
             reference_doc_path=raw.get("reference_doc_path"),
+            excluded_trim_keywords=excluded_trim_keywords,
         ))
 
     log.info("Loaded %d profile(s): %s", len(profiles), [p.profile_id for p in profiles])

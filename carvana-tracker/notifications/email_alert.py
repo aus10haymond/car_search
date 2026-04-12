@@ -31,11 +31,14 @@ def should_send(
 ) -> bool:
     """
     Return True if any alert condition is met:
+    - max_price is None (no budget cap) and there are any listings → always send
     - Any listing below max_price (the profile's budget)
     - Any new listing with value_score > 70
     - Any listing with a price drop >= 5%
     """
-    if max_price and any((r.get("price") or 999999) < max_price for r in listings):
+    if max_price is None and listings:
+        return True
+    if max_price is not None and max_price > 0 and any((r.get("price") or 999999) < max_price for r in listings):
         return True
     if any(r.get("vin") in new_vins and (r.get("value_score") or 0) > 70 for r in listings):
         return True
@@ -223,11 +226,7 @@ def _build_html(
             f"border-radius:3px;text-decoration:none;font-size:12px;white-space:nowrap'>View</a>"
         )
 
-        color_ext = (r.get("color_exterior") or "").strip()
-        color_int = (r.get("color_interior") or "").strip()
-        color_cell = color_ext
-        if color_int:
-            color_cell += f"<br><span style='color:#777;font-size:11px'>{color_int}</span>"
+        color_cell = (r.get("color_exterior") or "").strip()
 
         parts.append(
             f"<tr style='{row_bg}'>"
@@ -240,7 +239,7 @@ def _build_html(
             f"<td style='color:#555'>{(r.get('trim') or '')[:28]}</td>"
             f"<td>{price_cell}</td>"
             f"<td>{f'{mileage:,}' if mileage else 'N/A'}</td>"
-            f"<td>${r.get('monthly_estimated', 0):,.0f}/mo</td>"
+            f"<td>${r.get('monthly_carvana') or r.get('monthly_estimated') or 0:,.0f}/mo</td>"
             f"<td style='text-align:center'>{int(r.get('value_score') or 0)}</td>"
             f"<td style='text-align:center'>{hybrid_cell}</td>"
             f"<td style='text-align:center'>{view_btn}</td>"

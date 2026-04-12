@@ -14,6 +14,20 @@ import config
 
 log = logging.getLogger(__name__)
 
+# Injected before every page load so Carvana sees our zip code and computes shipping.
+# Carvana reads location from localStorage under several possible keys; we set all of them.
+def _zip_init_script(zip_code: str) -> str:
+    escaped = zip_code.replace("'", "\\'")
+    return f"""
+(function() {{
+    try {{
+        localStorage.setItem('zipCode', '{escaped}');
+        localStorage.setItem('userZip', '{escaped}');
+        localStorage.setItem('location', JSON.stringify({{zip: '{escaped}', zipCode: '{escaped}', state: 'AZ'}}));
+    }} catch(e) {{}}
+}})();
+"""
+
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -58,7 +72,8 @@ class Browser:
             viewport={"width": 1280, "height": 800},
         )
         self._page = self._context.new_page()
-        log.debug("Fresh browser context created")
+        self._page.add_init_script(_zip_init_script(config.ZIP_CODE))
+        log.debug("Fresh browser context created (zip=%s)", config.ZIP_CODE)
 
     def reset_context(self) -> None:
         """

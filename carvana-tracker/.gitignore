@@ -7,3 +7,4 @@ __pycache__/
 scrape_one.py
 debug_page.html
 run_tracker.bat
+.claude

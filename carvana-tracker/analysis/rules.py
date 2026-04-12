@@ -10,7 +10,6 @@ from collections import defaultdict
 import config
 from utils.payment_calc import (
     estimate_monthly_payment,
-    total_cost_of_ownership,
     price_per_mile as calc_price_per_mile,
 )
 
@@ -31,6 +30,7 @@ def apply_filters(
     max_mileage: int,
     min_year: int,
     max_year: int,
+    excluded_trim_keywords: list[str] | None = None,
 ) -> list[dict]:
     """
     Remove listings that:
@@ -38,15 +38,18 @@ def apply_filters(
     - exceed max_price
     - exceed max_mileage
     - are outside min_year / max_year range
+    - contain any excluded_trim_keywords in their trim (case-insensitive)
     Logs how many were removed and why.
     """
     removed = defaultdict(int)
     kept = []
+    _excluded = [k.lower() for k in (excluded_trim_keywords or [])]
 
     for listing in listings:
         price   = listing.get("price")
         mileage = listing.get("mileage")
         year    = listing.get("year")
+        trim    = (listing.get("trim") or "").lower()
 
         if not price or price <= 0:
             removed["no_price"] += 1
@@ -62,6 +65,9 @@ def apply_filters(
             continue
         if year is not None and year > max_year:
             removed["over_year"] += 1
+            continue
+        if _excluded and any(kw in trim for kw in _excluded):
+            removed["excluded_trim"] += 1
             continue
 
         kept.append(listing)
@@ -122,17 +128,15 @@ def enrich_listing(
     """
     Add computed fields to a listing dict:
       - monthly_estimated
-      - total_with_shipping
       - price_per_mile
       - is_hybrid
       - age_years
       - value_score
     """
-    price    = listing.get("price") or 0.0
-    mileage  = listing.get("mileage")
-    year     = listing.get("year")
-    trim     = listing.get("trim") or ""
-    shipping = listing.get("shipping")
+    price   = listing.get("price") or 0.0
+    mileage = listing.get("mileage")
+    year    = listing.get("year")
+    trim    = listing.get("trim") or ""
 
     listing["monthly_estimated"] = estimate_monthly_payment(
         price,
@@ -140,10 +144,9 @@ def enrich_listing(
         config.INTEREST_RATE,
         config.LOAN_TERM_MONTHS,
     )
-    listing["total_with_shipping"] = total_cost_of_ownership(price, shipping)
-    listing["price_per_mile"]      = calc_price_per_mile(price, mileage)
-    listing["is_hybrid"]           = _is_hybrid(trim)
-    listing["age_years"]           = (current_year - year) if year else None
+    listing["price_per_mile"] = calc_price_per_mile(price, mileage)
+    listing["is_hybrid"]      = _is_hybrid(trim)
+    listing["age_years"]      = (current_year - year) if year else None
     listing["value_score"]         = _value_score(
         listing, group_averages or {}, current_year, max_mileage,
         min_year=min_year,
@@ -167,18 +170,16 @@ def _value_score(
     """
     Produce a 0–100 score. Higher is better.
 
-    Components (base weights sum to 100, plus optional model preference bonus):
+    Components (base weights sum to 90, plus optional bonuses):
       35 — price vs group average (same make/model/year)
       25 — mileage (inverse linear, 0→25pts, max_mileage→0pts)
       20 — age (newer = better, max_year→20pts, min_year→0pts)
       10 — hybrid bonus (only when hybrid_bonus=True)
-      10 — shipping penalty (0/None→10pts, $1500+→0pts)
        6 — model preference bonus (auto-spread across model_preference order)
     """
-    price    = listing.get("price") or 0.0
-    mileage  = listing.get("mileage")
-    year     = listing.get("year")
-    shipping = listing.get("shipping")
+    price   = listing.get("price") or 0.0
+    mileage = listing.get("mileage")
+    year    = listing.get("year")
 
     # ── Price component (35 pts) ──────────────────────────────────────────────
     group_key = (listing.get("make"), listing.get("model"), year)
@@ -207,16 +208,10 @@ def _value_score(
     # ── Hybrid bonus (10 pts, optional) ──────────────────────────────────────
     hybrid_score = (10.0 if listing.get("is_hybrid") else 0.0) if hybrid_bonus else 0.0
 
-    # ── Shipping penalty (10 pts) ─────────────────────────────────────────────
-    if shipping is None or shipping <= 0:
-        shipping_score = 10.0
-    else:
-        shipping_score = max(0.0, 10.0 * (1 - shipping / 1500))
-
     # ── Model preference bonus (up to 6 pts, auto-spread by rank) ────────────
     model_score = _model_preference_bonus(listing.get("model") or "", model_preference or [])
 
-    total = price_score + mileage_score + age_score + hybrid_score + shipping_score + model_score
+    total = price_score + mileage_score + age_score + hybrid_score + model_score
     return round(min(100.0, max(0.0, total)), 2)
 
 

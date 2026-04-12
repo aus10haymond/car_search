@@ -3,10 +3,10 @@ import logging.handlers
 from pathlib import Path
 
 
-def setup_logging(log_file: str) -> None:
+def setup_logging(log_file: str, console_debug: bool = False) -> None:
     """
     Configure root logger:
-      - Console: INFO level, human-readable with timestamps
+      - Console: INFO level by default (DEBUG if console_debug=True)
       - File: DEBUG level, rotated at 5 MB, 3 backups kept (tracker.log)
     """
     Path(log_file).parent.mkdir(parents=True, exist_ok=True)
@@ -28,7 +28,7 @@ def setup_logging(log_file: str) -> None:
     )
 
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(logging.DEBUG if console_debug else logging.INFO)
     console_handler.setFormatter(fmt_console)
 
     file_handler = logging.handlers.RotatingFileHandler(

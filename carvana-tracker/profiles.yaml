@@ -22,23 +22,23 @@
 #                        If omitted, the LLM evaluates on listing data alone.
 
 profiles:
-  - profile_id: my_search
-    label: "My SUV Search"
-    vehicles:
-      - [Honda, CR-V]
-      - [Toyota, RAV4]
-      - [Subaru, Forester]
-      - [Kia, Sportage]
-    max_price: 30000
-    max_mileage: 80000
-    min_year: 2021
-    max_year: 2025
-    fuel_type_filters: [Hybrid, Gas]
-    model_preference: [CR-V, RAV4, Forester, Sportage]
-    reference_doc_path: ./SUV_REFERENCE_CONTEXT.md
-    email_to:
-      - austen.haymond@gmail.com
-      - andreavhaymond@gmail.com
+  # - profile_id: my_search
+  #   label: "My SUV Search"
+  #   vehicles:
+  #     - [Honda, CR-V]
+  #     - [Toyota, RAV4]
+  #     - [Subaru, Forester]
+  #     - [Kia, Sportage]
+  #   max_price: 30000
+  #   max_mileage: 80000
+  #   min_year: 2021
+  #   max_year: 2025
+  #   fuel_type_filters: [Hybrid, Gas]
+  #   model_preference: [CR-V, RAV4, Forester, Sportage]
+  #   reference_doc_path: ./SUV_REFERENCE_CONTEXT.md
+  #   email_to:
+  #     - austen.haymond@gmail.com
+  #     - andreavhaymond@gmail.com
 
   - profile_id: choppa_search
     label: "Choppa's Ride Search"
@@ -49,6 +49,8 @@ profiles:
     min_year: 2024
     max_year: 2026
     fuel_type_filters: [Hybrid]
+    excluded_trim_keywords: [MAX]
     email_to:
-      - azhaymond@gmail.com
+      # - azhaymond@gmail.com
+      - austen.haymond@gmail.com
     reference_doc_path: ./GRAND_HIGHLANDER_HYBRID_REFERENCE_CONTEXT.md
