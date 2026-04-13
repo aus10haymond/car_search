@@ -1,2 +1,16 @@
+.env
 carvana_results/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
 .vscode/
+.claude
+scrape_one.py
+debug_page.html
+run_tracker.bat
+profiles.yaml
+SUV_REFERENCE_CONTEXT.md
+GRAND_HIGHLANDER_HYBRID_REFERENCE_CONTEXT.md
+CARVANA_TRACKER_ARCHITECTURE.md
+carvana_tracker.py
