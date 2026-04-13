@@ -493,16 +493,22 @@ def check_setup() -> None:
         except AnthropicUnavailableError as exc:
             print(f"  [!!] Anthropic API: key present but request failed -- {exc}")
 
-    if config.MAILJET_API_KEY and config.MAILJET_SECRET_KEY:
-        print(f"  [OK] Mailjet: API key configured")
+    gmail_ready = bool(
+        config.GMAIL_CLIENT_ID
+        and config.GMAIL_CLIENT_SECRET
+        and config.GMAIL_REFRESH_TOKEN
+        and config.GMAIL_SENDER
+    )
+    if gmail_ready:
+        print(f"  [OK] Gmail API: configured (sender: {config.GMAIL_SENDER})")
     else:
-        print("  [--] Mailjet: not configured (MAILJET_API_KEY / MAILJET_SECRET_KEY in .env)")
+        print("  [--] Gmail API: not configured (run  python setup_gmail_oauth.py)")
 
     if config.SEND_EMAIL:
-        if config.EMAIL_FROM and config.MAILJET_API_KEY:
+        if gmail_ready:
             print("  [OK] Email: enabled (recipients set per-profile in profiles.yaml)")
         else:
-            print("  [!!] Email: SEND_EMAIL=True but EMAIL_FROM or MAILJET_API_KEY not set")
+            print("  [!!] Email: SEND_EMAIL=True but Gmail OAuth not configured")
     else:
         print("  [--] Email: disabled (SEND_EMAIL=False)")
 

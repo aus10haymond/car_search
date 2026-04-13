@@ -1,14 +1,20 @@
 """
-Email notifications via Mailjet REST API.
+Email notifications via Gmail API (OAuth2).
 
 Only sends when SEND_EMAIL = True in config.
-Uses requests (already in requirements) — no additional SDK needed.
+Uses requests (already in requirements) at runtime — no extra packages needed.
+
+One-time setup: run  python setup_gmail_oauth.py  to get your refresh token.
 """
 
 import base64
 import logging
 import re
 from datetime import datetime
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email import encoders
 from pathlib import Path
 
 import requests
@@ -19,9 +25,34 @@ from storage.trends import build_trend_charts_html
 
 log = logging.getLogger(__name__)
 
-_MAILJET_SEND_URL = "https://api.mailjet.com/v3.1/send"
-_VERSION = "0.6.0"
+_TOKEN_URL   = "https://oauth2.googleapis.com/token"
+_SEND_URL    = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+_VERSION     = "0.6.0"
 
+
+# ── OAuth token refresh ───────────────────────────────────────────────────────
+
+def _get_access_token() -> str | None:
+    """Exchange the stored refresh token for a short-lived access token."""
+    try:
+        resp = requests.post(
+            _TOKEN_URL,
+            data={
+                "client_id":     config.GMAIL_CLIENT_ID,
+                "client_secret": config.GMAIL_CLIENT_SECRET,
+                "refresh_token": config.GMAIL_REFRESH_TOKEN,
+                "grant_type":    "refresh_token",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+    except Exception as exc:
+        log.error("Failed to refresh Gmail access token: %s", exc)
+        return None
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 def should_send(
     listings: list[dict],
@@ -59,7 +90,7 @@ def send_summary(
     profile_label: str = "Carvana Tracker",
 ) -> bool:
     """
-    Send an HTML email summary via Mailjet with the CSV attached.
+    Send an HTML email summary via Gmail API with the CSV attached.
 
     Returns True on success, False on failure or if conditions not met.
     Only sends when SEND_EMAIL=True (or force=True).
@@ -70,7 +101,7 @@ def send_summary(
         return False
 
     if not _is_configured():
-        log.warning("Email not sent — Mailjet credentials or recipients not configured")
+        log.warning("Email not sent — Gmail OAuth credentials not configured (run setup_gmail_oauth.py)")
         return False
 
     recipients_list = email_to or []
@@ -78,48 +109,61 @@ def send_summary(
         log.warning("Email not sent — no recipients configured")
         return False
 
+    access_token = _get_access_token()
+    if not access_token:
+        return False
+
     subject = _build_subject(listings, price_drops, profile_label)
     html    = _build_html(listings, llm_result, price_drops, trends or {}, new_vins or set(),
                           profile_label)
 
-    recipients = [{"Email": addr} for addr in recipients_list]
+    from_addr = (
+        f"{config.EMAIL_FROM_NAME} <{config.GMAIL_SENDER}>"
+        if config.EMAIL_FROM_NAME
+        else config.GMAIL_SENDER
+    )
 
-    message: dict = {
-        "From":     {"Email": config.EMAIL_FROM, "Name": config.EMAIL_FROM_NAME},
-        "To":       recipients,
-        "Subject":  subject,
-        "HTMLPart": html,
-    }
-
+    # Build MIME message
     if csv_path and Path(csv_path).exists():
+        msg = MIMEMultipart()
+        msg.attach(MIMEText(html, "html", "utf-8"))
         try:
             with open(csv_path, "rb") as f:
-                csv_b64 = base64.b64encode(f.read()).decode()
-            message["Attachments"] = [{
-                "ContentType":  "text/csv",
-                "Filename":     Path(csv_path).name,
-                "Base64Content": csv_b64,
-            }]
+                attachment = MIMEBase("text", "csv")
+                attachment.set_payload(f.read())
+            encoders.encode_base64(attachment)
+            attachment.add_header(
+                "Content-Disposition",
+                "attachment",
+                filename=Path(csv_path).name,
+            )
+            msg.attach(attachment)
             log.debug("CSV attached: %s", Path(csv_path).name)
         except Exception as exc:
             log.warning("Could not attach CSV: %s", exc)
+    else:
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(html, "html", "utf-8"))
 
-    payload = {"Messages": [message]}
+    msg["Subject"] = subject
+    msg["From"]    = from_addr
+    msg["To"]      = ", ".join(recipients_list)
 
-    resp = None
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+
     try:
         resp = requests.post(
-            _MAILJET_SEND_URL,
-            auth=(config.MAILJET_API_KEY, config.MAILJET_SECRET_KEY),
-            json=payload,
-            timeout=15,
+            _SEND_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"raw": raw},
+            timeout=20,
         )
         resp.raise_for_status()
-        log.info("Email sent to %d recipient(s) via Mailjet", len(recipients))
+        log.info("Email sent to %d recipient(s) via Gmail API", len(recipients_list))
         return True
     except requests.HTTPError as exc:
         body = resp.text[:300] if resp is not None else ""
-        log.error("Mailjet HTTP error: %s — %s", exc, body)
+        log.error("Gmail API HTTP error: %s — %s", exc, body)
     except Exception as exc:
         log.error("Email send failed: %s", exc)
     return False
@@ -129,9 +173,10 @@ def send_summary(
 
 def _is_configured() -> bool:
     return bool(
-        config.MAILJET_API_KEY
-        and config.MAILJET_SECRET_KEY
-        and config.EMAIL_FROM
+        config.GMAIL_CLIENT_ID
+        and config.GMAIL_CLIENT_SECRET
+        and config.GMAIL_REFRESH_TOKEN
+        and config.GMAIL_SENDER
     )
 
 
@@ -347,7 +392,6 @@ def _md_to_html(text: str) -> str:
         close_lists()
 
         if not s:
-            # Blank line — small vertical gap
             out.append("<div style='height:6px'></div>")
         elif s.startswith("### "):
             out.append(f"<h5 style='margin:10px 0 2px'>{_inline_md(s[4:])}</h5>")
@@ -366,11 +410,8 @@ def _md_to_html(text: str) -> str:
 
 def _inline_md(text: str) -> str:
     """Convert inline markdown (bold, italic, code) to HTML."""
-    # Bold
     text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
-    # Italic (single asterisk or underscore, not touching word boundaries aggressively)
     text = re.sub(r"\*([^*]+?)\*", r"<em>\1</em>", text)
     text = re.sub(r"_([^_]+?)_",   r"<em>\1</em>", text)
-    # Inline code
     text = re.sub(r"`(.+?)`", r"<code style='background:#eee;padding:1px 4px;border-radius:3px'>\1</code>", text)
     return text

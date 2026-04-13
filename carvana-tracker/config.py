@@ -34,13 +34,15 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_MODEL    = "gemma3:4b"
 OLLAMA_TIMEOUT  = 300               # seconds
 
-# ── Email — Mailjet (optional) ────────────────────────────────────────────────
+# ── Email — Gmail API (optional) ─────────────────────────────────────────────
 # Recipients are configured per-profile in profiles.yaml.
-SEND_EMAIL          = True
-EMAIL_FROM          = os.getenv("EMAIL_FROM", "")           # Verified sender address
-EMAIL_FROM_NAME     = os.getenv("EMAIL_FROM_NAME", "Carvana Tracker")
-MAILJET_API_KEY     = os.getenv("MAILJET_API_KEY", "")
-MAILJET_SECRET_KEY  = os.getenv("MAILJET_SECRET_KEY", "")
+# Run  python setup_gmail_oauth.py  once to populate the three OAuth values.
+SEND_EMAIL            = True
+EMAIL_FROM_NAME       = os.getenv("EMAIL_FROM_NAME", "Carvana Tracker")
+GMAIL_SENDER          = os.getenv("GMAIL_SENDER", "")           # your Gmail address
+GMAIL_CLIENT_ID       = os.getenv("GMAIL_CLIENT_ID", "")
+GMAIL_CLIENT_SECRET   = os.getenv("GMAIL_CLIENT_SECRET", "")
+GMAIL_REFRESH_TOKEN   = os.getenv("GMAIL_REFRESH_TOKEN", "")
 
 # ── Scraping behaviour ────────────────────────────────────────────────────────
 HEADLESS              = True
