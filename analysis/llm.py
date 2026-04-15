@@ -33,6 +33,8 @@ class LLMAnalyzer:
         reference_doc: str = "",
         max_price: int = 0,
         has_hybrid_interest: bool = False,
+        show_financing: bool = True,
+        down_payment: int | None = None,
     ):
         self.ollama = OllamaClient(
             base_url=config.OLLAMA_BASE_URL,
@@ -48,6 +50,8 @@ class LLMAnalyzer:
         self._reference_doc   = reference_doc
         self._max_price       = max_price
         self._has_hybrid      = has_hybrid_interest
+        self._show_financing  = show_financing
+        self._down_payment    = down_payment if down_payment is not None else config.DOWN_PAYMENT
 
     def analyze(self, listings: list[dict]) -> LLMResult:
         """
@@ -200,11 +204,15 @@ class LLMAnalyzer:
             if not self._reference_doc
             else ""
         )
+        financing_note = (
+            f"They plan to finance with ${self._down_payment:,} down, "
+            f"at {config.INTEREST_RATE}% APR over {config.LOAN_TERM_MONTHS} months.\n"
+            if self._show_financing else ""
+        )
         system_context = (
             f"You are an automotive analyst helping a buyer find the best used vehicle deal on Carvana.\n"
             f"The buyer is located in Phoenix, AZ. Their budget is {budget_str}.\n"
-            f"{fuel_note} They plan to finance with ${config.DOWN_PAYMENT:,} down,\n"
-            f"at {config.INTEREST_RATE}% APR over {config.LOAN_TERM_MONTHS} months.\n"
+            f"{fuel_note} {financing_note}"
             f"Analyze the listings below and provide a clear, practical recommendation.\n"
             f"Do not speculate beyond the data provided. Flag any data that looks unusual."
             f"{no_ref_note}"
@@ -218,8 +226,12 @@ class LLMAnalyzer:
 
         # Build markdown table — keep a mapping from row ID to VIN for top-pick parsing
         self._last_id_to_vin: dict[int, str] = {}
-        table_header = "| ID | Year | Make | Model | Trim | Price | Mileage | Est. Payment | Value Score | Hybrid |"
-        table_sep    = "|----|------|------|-------|------|-------|---------|--------------|-------------|--------|"
+        if self._show_financing:
+            table_header = "| ID | Year | Make | Model | Trim | Price | Mileage | Est. Payment | Value Score | Hybrid |"
+            table_sep    = "|----|------|------|-------|------|-------|---------|--------------|-------------|--------|"
+        else:
+            table_header = "| ID | Year | Make | Model | Trim | Price | Mileage | Value Score | Hybrid |"
+            table_sep    = "|----|------|------|-------|------|-------|---------|-------------|--------|"
         table_rows   = []
         for idx, r in enumerate(top_listings, start=1):
             self._last_id_to_vin[idx] = r.get("vin") or ""
@@ -228,12 +240,18 @@ class LLMAnalyzer:
                 trim = f"[HYBRID] {trim}"
             price   = f"${round(r.get('price') or 0):,}"
             mileage = f"{round((r.get('mileage') or 0) / 100) * 100:,}"
-            payment = f"${r.get('monthly_carvana') or r.get('monthly_estimated') or 0:,.0f}/mo"
             score   = int(r.get("value_score") or 0)
-            table_rows.append(
-                f"| {idx} | {r.get('year')} | {r.get('make')} | {r.get('model')} | {trim} "
-                f"| {price} | {mileage} | {payment} | {score} | {'Yes' if r.get('is_hybrid') else 'No'} |"
-            )
+            if self._show_financing:
+                payment = f"${r.get('monthly_carvana') or r.get('monthly_estimated') or 0:,.0f}/mo"
+                table_rows.append(
+                    f"| {idx} | {r.get('year')} | {r.get('make')} | {r.get('model')} | {trim} "
+                    f"| {price} | {mileage} | {payment} | {score} | {'Yes' if r.get('is_hybrid') else 'No'} |"
+                )
+            else:
+                table_rows.append(
+                    f"| {idx} | {r.get('year')} | {r.get('make')} | {r.get('model')} | {trim} "
+                    f"| {price} | {mileage} | {score} | {'Yes' if r.get('is_hybrid') else 'No'} |"
+                )
 
         table = "\n".join([table_header, table_sep] + table_rows)
 

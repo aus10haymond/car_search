@@ -150,6 +150,8 @@ def _run_profile(
             reference_doc=reference_doc,
             max_price=profile.max_price,
             has_hybrid_interest=has_hybrid_interest,
+            show_financing=profile.show_financing,
+            down_payment=profile.down_payment,
         )
         _log_llm_summary(llm_result)
 
@@ -310,6 +312,8 @@ def _run_llm(
     reference_doc: str = "",
     max_price: int = 0,
     has_hybrid_interest: bool = False,
+    show_financing: bool = True,
+    down_payment: int | None = None,
 ) -> LLMResult:
     if skip_llm:
         log.info("LLM analysis skipped (--no-llm)")
@@ -330,6 +334,8 @@ def _run_llm(
             reference_doc=reference_doc,
             max_price=max_price,
             has_hybrid_interest=has_hybrid_interest,
+            show_financing=show_financing,
+            down_payment=down_payment,
         )
         prompt = analyzer.build_prompt(listings)
         log.debug("LLM prompt length: %d characters, ~%d tokens", len(prompt), len(prompt) // 4)
