@@ -183,8 +183,10 @@ class LLMAnalyzer:
         from datetime import datetime, timezone
 
         run_ts       = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        # Use listings in the order they arrive (already sorted by model_preference
+        # then value_score in main.py) so the table IDs map 1:1 to email row numbers.
         total_shown  = min(30, len(listings))
-        top_listings = sorted(listings, key=lambda x: x.get("value_score") or 0, reverse=True)[:total_shown]
+        top_listings = listings[:total_shown]
 
         fuel_note = (
             "They are particularly interested in hybrid trims."
@@ -235,10 +237,10 @@ class LLMAnalyzer:
 
         table = "\n".join([table_header, table_sep] + table_rows)
 
-        # Top 5 highlight block
+        # Top 5 highlight block (same order as table — IDs 1–5)
         top5 = top_listings[:5]
         top5_lines = "\n".join(
-            f"{i+1}. {r.get('year')} {r.get('make')} {r.get('model')} {r.get('trim','')} "
+            f"ID {i+1}. {r.get('year')} {r.get('make')} {r.get('model')} {r.get('trim','')} "
             f"— ${r.get('price',0):,.0f}, {r.get('mileage') or 'N/A'} mi, score={int(r.get('value_score') or 0)}"
             for i, r in enumerate(top5)
         )

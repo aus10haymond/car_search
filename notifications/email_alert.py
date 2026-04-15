@@ -213,15 +213,23 @@ def _build_html(
     run_time = datetime.now().strftime("%b %d, %Y %I:%M %p")
     top10    = listings[:10]
 
-    # VINs the LLM explicitly recommended — fall back to top 3 by score if unavailable
-    if llm_result.top_pick_vins:
-        top3_vins: set[str] = set(llm_result.top_pick_vins)
-    else:
-        top3_vins = {
+    # VINs the LLM explicitly recommended.
+    # Fall back to top 3 by score if: no picks returned, or none of the picks
+    # appear in the displayed rows (e.g. LLM recommended a vehicle from a
+    # different model that isn't in this table's top 10).
+    def _score_fallback() -> set[str]:
+        return {
             r["vin"]
             for r in sorted(top10, key=lambda x: -(x.get("value_score") or 0))[:3]
             if r.get("vin")
         }
+
+    if llm_result.top_pick_vins:
+        top3_vins: set[str] = set(llm_result.top_pick_vins)
+        if not any(r.get("vin") in top3_vins for r in top10):
+            top3_vins = _score_fallback()
+    else:
+        top3_vins = _score_fallback()
     drop_by_vin: dict[str, dict] = {d["vin"]: d for d in price_drops if d.get("vin")}
     new_vins = new_vins or set()
 
