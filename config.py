@@ -22,17 +22,27 @@ LOG_FILE   = "./carvana_results/tracker.log"
 # ── AI analysis ───────────────────────────────────────────────────────────────
 # Reference doc is set per-profile in profiles.yaml via reference_doc_path.
 
-# Primary: Anthropic API
+# Primary: Network Ollama (uses whatever model is currently loaded)
+OLLAMA_ENABLED          = True
+OLLAMA_NETWORK_HOST     = os.getenv("OLLAMA_NETWORK_HOST", "")
+OLLAMA_NETWORK_BASE_URL = f"http://{OLLAMA_NETWORK_HOST}" if OLLAMA_NETWORK_HOST else ""
+OLLAMA_TIMEOUT          = 600               # seconds (10 min max before Anthropic fallback)
+
+# If no model is loaded, the first model from this list that is installed on the
+# server will be loaded. Order by preference (best instruction-follower first).
+OLLAMA_PREFERRED_MODELS = [
+    "qwen3.5:9b",
+    "deepseek-r1:latest",
+    "gemma4:e4b",
+    "qwen3.5:4b",
+    "gemma4:e2b",
+]
+
+# Fallback: Anthropic API
 ANTHROPIC_ENABLED    = True
 ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL      = "claude-haiku-4-5-20251001"
 ANTHROPIC_MAX_TOKENS = 1500
-
-# Fallback: local Ollama
-OLLAMA_ENABLED  = True
-OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL    = "gemma3:4b"
-OLLAMA_TIMEOUT  = 300               # seconds
 
 # ── Email — Gmail API (optional) ─────────────────────────────────────────────
 # Recipients are configured per-profile in profiles.yaml.

@@ -1,5 +1,5 @@
 """
-LLM analysis orchestrator — Anthropic API primary, Ollama fallback.
+LLM analysis orchestrator — network Ollama primary, Anthropic API fallback.
 
 This is the only module that imports both clients.
 """
@@ -37,8 +37,7 @@ class LLMAnalyzer:
         down_payment: int | None = None,
     ):
         self.ollama = OllamaClient(
-            base_url=config.OLLAMA_BASE_URL,
-            model=config.OLLAMA_MODEL,
+            base_url=config.OLLAMA_NETWORK_BASE_URL,
             timeout=config.OLLAMA_TIMEOUT,
         )
         self.anthropic = AnthropicClient(
@@ -55,16 +54,16 @@ class LLMAnalyzer:
 
     def analyze(self, listings: list[dict]) -> LLMResult:
         """
-        1. If ANTHROPIC_ENABLED and anthropic.is_configured():
+        1. If OLLAMA_ENABLED and network Ollama has a model loaded:
+               try ollama.analyze(prompt, model=loaded_model)
+               on success: return result with backend_used="ollama"
+               on OllamaUnavailableError or OllamaModelError:
+                   log WARNING, fall through to step 2
+
+        2. If ANTHROPIC_ENABLED and anthropic.is_configured():
                try anthropic.analyze(prompt)
                on success: return result with backend_used="anthropic_api"
                on AnthropicUnavailableError:
-                   log WARNING, fall through to step 2
-
-        2. If OLLAMA_ENABLED and ollama.is_available():
-               try ollama.analyze(prompt)
-               on success: return result with backend_used="ollama"
-               on OllamaUnavailableError or OllamaModelError:
                    log ERROR, fall through to step 3
 
         3. Neither backend available:
@@ -74,20 +73,67 @@ class LLMAnalyzer:
         """
         prompt = self.build_prompt(listings)
 
-        # ── Step 1: Anthropic API (primary) ───────────────────────────────────
+        # ── Step 1: Network Ollama (primary) ──────────────────────────────────
+        if config.OLLAMA_ENABLED and config.OLLAMA_NETWORK_BASE_URL:
+            loaded_model = self.ollama.get_loaded_model()
+            if not loaded_model:
+                loaded_model = self.ollama.get_preferred_model(config.OLLAMA_PREFERRED_MODELS)
+                if loaded_model:
+                    log.info(
+                        "Network Ollama: no model loaded — will load preferred model %s",
+                        loaded_model,
+                    )
+                else:
+                    log.warning(
+                        "Network Ollama: no model loaded and no preferred model installed "
+                        "— falling back to Anthropic API"
+                    )
+
+            if loaded_model:
+                t0 = time.monotonic()
+                try:
+                    text = self.ollama.analyze(
+                        prompt, reference_doc=self._reference_doc, model=loaded_model
+                    )
+                    latency = int((time.monotonic() - t0) * 1000)
+                    log.info(
+                        "LLM analysis complete via network Ollama/%s (%dms)",
+                        loaded_model, latency,
+                    )
+                    self.backend_used = "ollama"
+                    cleaned_text, top_pick_vins = self._parse_top_picks(text)
+                    return LLMResult(
+                        analysis=cleaned_text,
+                        backend_used="ollama",
+                        model_used=loaded_model,
+                        tokens_used=None,
+                        latency_ms=latency,
+                        error=None,
+                        top_pick_vins=top_pick_vins,
+                    )
+                except (OllamaUnavailableError, OllamaModelError) as exc:
+                    log.warning(
+                        "Network Ollama failed: %s — falling back to Anthropic API", exc
+                    )
+        elif config.OLLAMA_ENABLED:
+            log.debug("OLLAMA_NETWORK_HOST not set — skipping Ollama")
+        else:
+            log.debug("Ollama disabled in config")
+
+        # ── Step 2: Anthropic API (fallback) ──────────────────────────────────
         if config.ANTHROPIC_ENABLED:
             if self.anthropic.is_configured():
                 t0 = time.monotonic()
                 try:
-                    text, cache_hit = self.anthropic.analyze(prompt, reference_doc=self._reference_doc)
+                    text, cache_hit = self.anthropic.analyze(
+                        prompt, reference_doc=self._reference_doc
+                    )
                     latency = int((time.monotonic() - t0) * 1000)
                     log.info(
                         "LLM analysis complete via Anthropic API (%dms, cache_hit=%s)",
                         latency, cache_hit,
                     )
                     self.backend_used = "anthropic_api"
-                    if config.OLLAMA_ENABLED:
-                        self.ollama.unload()
                     cleaned_text, top_pick_vins = self._parse_top_picks(text)
                     return LLMResult(
                         analysis=cleaned_text,
@@ -100,38 +146,13 @@ class LLMAnalyzer:
                         top_pick_vins=top_pick_vins,
                     )
                 except AnthropicUnavailableError as exc:
-                    log.warning("Anthropic API failed: %s — falling back to Ollama", exc)
+                    log.error(
+                        "Anthropic API failed: %s — no LLM analysis available", exc
+                    )
             else:
-                log.warning("Anthropic API key not configured — falling back to Ollama")
+                log.warning("Anthropic API key not configured — no LLM analysis available")
         else:
             log.debug("Anthropic API disabled in config")
-
-        # ── Step 2: Ollama (fallback) ─────────────────────────────────────────
-        if config.OLLAMA_ENABLED:
-            if self.ollama.is_available():
-                t0 = time.monotonic()
-                try:
-                    text = self.ollama.analyze(prompt, reference_doc=self._reference_doc)
-                    latency = int((time.monotonic() - t0) * 1000)
-                    log.info("LLM analysis complete via Ollama (%dms)", latency)
-                    self.backend_used = "ollama"
-                    self.ollama.unload()
-                    cleaned_text, top_pick_vins = self._parse_top_picks(text)
-                    return LLMResult(
-                        analysis=cleaned_text,
-                        backend_used="ollama",
-                        model_used=config.OLLAMA_MODEL,
-                        tokens_used=None,
-                        latency_ms=latency,
-                        error=None,
-                        top_pick_vins=top_pick_vins,
-                    )
-                except (OllamaUnavailableError, OllamaModelError) as exc:
-                    log.error("Ollama failed: %s — no LLM analysis available", exc)
-            else:
-                log.warning("Ollama is not available (model=%s) — no LLM analysis available", config.OLLAMA_MODEL)
-        else:
-            log.debug("Ollama disabled in config")
 
         # ── Step 3: No backend available ──────────────────────────────────────
         self.backend_used = "none"
@@ -141,7 +162,7 @@ class LLMAnalyzer:
             model_used="",
             tokens_used=None,
             latency_ms=0,
-            error="No LLM backend available (Ollama unavailable, Anthropic API not configured or disabled)",
+            error="No LLM backend available (network Ollama unreachable/no model loaded, Anthropic API not configured or disabled)",
         )
 
     def _parse_top_picks(self, text: str) -> tuple[str, list[str]]:

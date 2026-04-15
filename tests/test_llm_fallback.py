@@ -30,41 +30,47 @@ def _listings():
 def _analyzer() -> Any:
     """Return an LLMAnalyzer with both backends pre-configured."""
     analyzer = LLMAnalyzer.__new__(LLMAnalyzer)
-    analyzer.ollama        = MagicMock()
-    analyzer.anthropic     = MagicMock()
-    analyzer.backend_used  = None
-    analyzer._reference_doc = ""
+    analyzer.ollama         = MagicMock()
+    analyzer.anthropic      = MagicMock()
+    analyzer.backend_used   = None
+    analyzer._reference_doc  = ""
+    analyzer._show_financing = True
+    analyzer._down_payment   = 3000
+    analyzer._has_hybrid     = False
+    analyzer._max_price      = 0
     return analyzer
 
 
-# ── Anthropic available → uses Anthropic (primary) ───────────────────────────
+# ── Ollama available → uses Ollama (primary) ──────────────────────────────────
 
-def test_uses_ollama_when_available(monkeypatch):
-    """Anthropic is primary; when configured it should be used even if Ollama is available."""
-    monkeypatch.setattr("config.OLLAMA_ENABLED",    True)
-    monkeypatch.setattr("config.ANTHROPIC_ENABLED", True)
+def test_uses_ollama_when_model_loaded(monkeypatch):
+    """Ollama is primary; when a model is loaded it should be used, Anthropic skipped."""
+    monkeypatch.setattr("config.OLLAMA_ENABLED",          True)
+    monkeypatch.setattr("config.OLLAMA_NETWORK_BASE_URL", "http://192.168.0.206:11434")
+    monkeypatch.setattr("config.ANTHROPIC_ENABLED",       True)
 
     analyzer = _analyzer()
-    analyzer.anthropic.is_configured.return_value = True
-    analyzer.anthropic.analyze.return_value = ("Great deal on the RAV4.", None)
-    analyzer.ollama.is_available.return_value = True
+    analyzer.ollama.get_loaded_model.return_value = "gemma4:e4b"
+    analyzer.ollama.analyze.return_value = "Great deal on the RAV4."
 
     result = analyzer.analyze(_listings())
 
-    assert result.backend_used == "anthropic_api"
+    assert result.backend_used == "ollama"
+    assert result.model_used   == "gemma4:e4b"
     assert result.analysis     == "Great deal on the RAV4."
     assert result.error        is None
-    analyzer.ollama.analyze.assert_not_called()
+    analyzer.anthropic.analyze.assert_not_called()
 
 
 # ── Ollama fails → falls back to Anthropic ────────────────────────────────────
 
 def test_ollama_unavailable_error_falls_back(monkeypatch):
-    monkeypatch.setattr("config.OLLAMA_ENABLED",    True)
-    monkeypatch.setattr("config.ANTHROPIC_ENABLED", True)
+    monkeypatch.setattr("config.OLLAMA_ENABLED",          True)
+    monkeypatch.setattr("config.OLLAMA_NETWORK_BASE_URL", "http://192.168.0.206:11434")
+    monkeypatch.setattr("config.ANTHROPIC_ENABLED",       True)
 
     analyzer = _analyzer()
-    analyzer.ollama.is_available.return_value = True
+    analyzer.ollama.get_loaded_model.return_value = "gemma4:e4b"
     analyzer.ollama.analyze.side_effect = OllamaUnavailableError("connection refused")
     analyzer.anthropic.is_configured.return_value = True
     analyzer.anthropic.analyze.return_value = ("API analysis here.", None)
@@ -77,11 +83,12 @@ def test_ollama_unavailable_error_falls_back(monkeypatch):
 
 
 def test_ollama_model_error_falls_back(monkeypatch):
-    monkeypatch.setattr("config.OLLAMA_ENABLED",    True)
-    monkeypatch.setattr("config.ANTHROPIC_ENABLED", True)
+    monkeypatch.setattr("config.OLLAMA_ENABLED",          True)
+    monkeypatch.setattr("config.OLLAMA_NETWORK_BASE_URL", "http://192.168.0.206:11434")
+    monkeypatch.setattr("config.ANTHROPIC_ENABLED",       True)
 
     analyzer = _analyzer()
-    analyzer.ollama.is_available.return_value = True
+    analyzer.ollama.get_loaded_model.return_value = "gemma4:e4b"
     analyzer.ollama.analyze.side_effect = OllamaModelError("model not found")
     analyzer.anthropic.is_configured.return_value = True
     analyzer.anthropic.analyze.return_value = ("API analysis here.", None)
@@ -91,12 +98,35 @@ def test_ollama_model_error_falls_back(monkeypatch):
     assert result.backend_used == "anthropic_api"
 
 
-def test_ollama_not_available_falls_back(monkeypatch):
-    monkeypatch.setattr("config.OLLAMA_ENABLED",    True)
-    monkeypatch.setattr("config.ANTHROPIC_ENABLED", True)
+def test_ollama_no_model_loaded_uses_preferred(monkeypatch):
+    """If nothing is loaded but a preferred model is installed, load and use it."""
+    monkeypatch.setattr("config.OLLAMA_ENABLED",           True)
+    monkeypatch.setattr("config.OLLAMA_NETWORK_BASE_URL",  "http://192.168.0.206:11434")
+    monkeypatch.setattr("config.OLLAMA_PREFERRED_MODELS",  ["qwen3.5:9b", "gemma4:e4b"])
+    monkeypatch.setattr("config.ANTHROPIC_ENABLED",        True)
 
     analyzer = _analyzer()
-    analyzer.ollama.is_available.return_value = False
+    analyzer.ollama.get_loaded_model.return_value = None
+    analyzer.ollama.get_preferred_model.return_value = "qwen3.5:9b"
+    analyzer.ollama.analyze.return_value = "Preferred model analysis."
+
+    result = analyzer.analyze(_listings())
+
+    assert result.backend_used == "ollama"
+    assert result.model_used   == "qwen3.5:9b"
+    analyzer.anthropic.analyze.assert_not_called()
+
+
+def test_ollama_no_model_loaded_no_preferred_falls_back(monkeypatch):
+    """If nothing is loaded and no preferred model is installed, fall back to Anthropic."""
+    monkeypatch.setattr("config.OLLAMA_ENABLED",           True)
+    monkeypatch.setattr("config.OLLAMA_NETWORK_BASE_URL",  "http://192.168.0.206:11434")
+    monkeypatch.setattr("config.OLLAMA_PREFERRED_MODELS",  ["qwen3.5:9b"])
+    monkeypatch.setattr("config.ANTHROPIC_ENABLED",        True)
+
+    analyzer = _analyzer()
+    analyzer.ollama.get_loaded_model.return_value = None
+    analyzer.ollama.get_preferred_model.return_value = None
     analyzer.anthropic.is_configured.return_value = True
     analyzer.anthropic.analyze.return_value = ("API analysis here.", None)
 
@@ -109,11 +139,12 @@ def test_ollama_not_available_falls_back(monkeypatch):
 # ── Both fail → returns none result ──────────────────────────────────────────
 
 def test_both_fail_returns_none_result(monkeypatch):
-    monkeypatch.setattr("config.OLLAMA_ENABLED",    True)
-    monkeypatch.setattr("config.ANTHROPIC_ENABLED", True)
+    monkeypatch.setattr("config.OLLAMA_ENABLED",          True)
+    monkeypatch.setattr("config.OLLAMA_NETWORK_BASE_URL", "http://192.168.0.206:11434")
+    monkeypatch.setattr("config.ANTHROPIC_ENABLED",       True)
 
     analyzer = _analyzer()
-    analyzer.ollama.is_available.return_value = True
+    analyzer.ollama.get_loaded_model.return_value = "gemma4:e4b"
     analyzer.ollama.analyze.side_effect = OllamaUnavailableError("timeout")
     analyzer.anthropic.is_configured.return_value = True
     analyzer.anthropic.analyze.side_effect = AnthropicUnavailableError("rate limit")
@@ -150,14 +181,33 @@ def test_both_disabled_returns_none(monkeypatch):
     assert result.analysis     is None
 
 
-# ── Anthropic API not configured → uses none, skips API ──────────────────────
+# ── Network host not configured → skips Ollama ───────────────────────────────
 
-def test_anthropic_not_configured_skips_api(monkeypatch):
-    monkeypatch.setattr("config.OLLAMA_ENABLED",    True)
-    monkeypatch.setattr("config.ANTHROPIC_ENABLED", True)
+def test_no_network_host_skips_ollama(monkeypatch):
+    """If OLLAMA_NETWORK_BASE_URL is empty, Ollama is skipped even when enabled."""
+    monkeypatch.setattr("config.OLLAMA_ENABLED",          True)
+    monkeypatch.setattr("config.OLLAMA_NETWORK_BASE_URL", "")
+    monkeypatch.setattr("config.ANTHROPIC_ENABLED",       True)
 
     analyzer = _analyzer()
-    analyzer.ollama.is_available.return_value = False
+    analyzer.anthropic.is_configured.return_value = True
+    analyzer.anthropic.analyze.return_value = ("API analysis here.", None)
+
+    result = analyzer.analyze(_listings())
+
+    assert result.backend_used == "anthropic_api"
+    analyzer.ollama.get_loaded_model.assert_not_called()
+
+
+def test_anthropic_not_configured_returns_none(monkeypatch):
+    monkeypatch.setattr("config.OLLAMA_ENABLED",           True)
+    monkeypatch.setattr("config.OLLAMA_NETWORK_BASE_URL",  "http://192.168.0.206:11434")
+    monkeypatch.setattr("config.OLLAMA_PREFERRED_MODELS",  [])
+    monkeypatch.setattr("config.ANTHROPIC_ENABLED",        True)
+
+    analyzer = _analyzer()
+    analyzer.ollama.get_loaded_model.return_value = None
+    analyzer.ollama.get_preferred_model.return_value = None
     analyzer.anthropic.is_configured.return_value = False
 
     result = analyzer.analyze(_listings())
@@ -169,12 +219,12 @@ def test_anthropic_not_configured_skips_api(monkeypatch):
 # ── LLMResult shape ───────────────────────────────────────────────────────────
 
 def test_result_is_llmresult_instance(monkeypatch):
-    monkeypatch.setattr("config.OLLAMA_ENABLED",    True)
-    monkeypatch.setattr("config.ANTHROPIC_ENABLED", True)
+    monkeypatch.setattr("config.OLLAMA_ENABLED",          True)
+    monkeypatch.setattr("config.OLLAMA_NETWORK_BASE_URL", "http://192.168.0.206:11434")
+    monkeypatch.setattr("config.ANTHROPIC_ENABLED",       True)
 
     analyzer = _analyzer()
-    analyzer.anthropic.is_configured.return_value = False
-    analyzer.ollama.is_available.return_value = True
+    analyzer.ollama.get_loaded_model.return_value = "gemma4:e4b"
     analyzer.ollama.analyze.return_value = "some analysis"
 
     result = analyzer.analyze(_listings())
@@ -185,11 +235,14 @@ def test_result_is_llmresult_instance(monkeypatch):
 
 
 def test_result_has_model_used(monkeypatch):
-    monkeypatch.setattr("config.OLLAMA_ENABLED",     True)
-    monkeypatch.setattr("config.ANTHROPIC_ENABLED",  True)
-    monkeypatch.setattr("config.ANTHROPIC_MODEL",    "claude-haiku-4-5-20251001")
+    monkeypatch.setattr("config.OLLAMA_ENABLED",          True)
+    monkeypatch.setattr("config.OLLAMA_NETWORK_BASE_URL", "http://192.168.0.206:11434")
+    monkeypatch.setattr("config.ANTHROPIC_ENABLED",       True)
+    monkeypatch.setattr("config.ANTHROPIC_MODEL",         "claude-haiku-4-5-20251001")
 
     analyzer = _analyzer()
+    analyzer.ollama.get_loaded_model.return_value = None      # no model loaded
+    analyzer.ollama.get_preferred_model.return_value = None   # none installed → Anthropic
     analyzer.anthropic.is_configured.return_value = True
     analyzer.anthropic.analyze.return_value = ("analysis", None)
 
@@ -200,11 +253,22 @@ def test_result_has_model_used(monkeypatch):
 
 # ── build_prompt ──────────────────────────────────────────────────────────────
 
-def test_build_prompt_contains_listing_data():
+def _bare_analyzer() -> Any:
+    """Minimal LLMAnalyzer for build_prompt tests (no network calls)."""
     analyzer = LLMAnalyzer.__new__(LLMAnalyzer)
-    analyzer.ollama    = MagicMock()
-    analyzer.anthropic = MagicMock()
-    analyzer.backend_used = None
+    analyzer.ollama          = MagicMock()
+    analyzer.anthropic       = MagicMock()
+    analyzer.backend_used    = None
+    analyzer._reference_doc  = ""
+    analyzer._show_financing = True
+    analyzer._down_payment   = 3000
+    analyzer._has_hybrid     = False
+    analyzer._max_price      = 0
+    return analyzer
+
+
+def test_build_prompt_contains_listing_data():
+    analyzer = _bare_analyzer()
 
     prompt = analyzer.build_prompt(_listings())
 
@@ -215,10 +279,7 @@ def test_build_prompt_contains_listing_data():
 
 
 def test_build_prompt_caps_at_30_listings():
-    analyzer = LLMAnalyzer.__new__(LLMAnalyzer)
-    analyzer.ollama    = MagicMock()
-    analyzer.anthropic = MagicMock()
-    analyzer.backend_used = None
+    analyzer = _bare_analyzer()
 
     # Create 40 listings
     many = [
@@ -236,10 +297,7 @@ def test_build_prompt_caps_at_30_listings():
 
 
 def test_build_prompt_marks_hybrid():
-    analyzer = LLMAnalyzer.__new__(LLMAnalyzer)
-    analyzer.ollama    = MagicMock()
-    analyzer.anthropic = MagicMock()
-    analyzer.backend_used = None
+    analyzer = _bare_analyzer()
 
     hybrid_listing = {
         "year": 2023, "make": "Toyota", "model": "RAV4", "trim": "XSE Hybrid",

@@ -3,8 +3,6 @@ Ollama local LLM client.
 """
 
 import logging
-import threading
-import time
 
 import requests
 
@@ -20,72 +18,83 @@ class OllamaModelError(Exception):
 
 
 class OllamaClient:
-    def __init__(self, base_url: str, model: str, timeout: int):
+    def __init__(self, base_url: str, timeout: int):
         self.base_url = base_url.rstrip("/")
-        self.model    = model
         self.timeout  = timeout
 
     def is_available(self) -> bool:
         """
-        GET {base_url}/api/tags — returns True if Ollama is running and
-        the configured model is in the response. Returns False on any exception.
+        GET {base_url}/api/tags — returns True if the Ollama server is reachable.
+        Does not check for a specific model.
         """
         try:
             resp = requests.get(f"{self.base_url}/api/tags", timeout=5)
             resp.raise_for_status()
-            models = [m.get("name", "") for m in resp.json().get("models", [])]
-            available = any(self.model in m for m in models)
-            log.debug(
-                "Ollama is_available=%s (model=%s, found=%s)",
-                available, self.model, models,
-            )
-            return available
+            log.debug("Ollama is_available=True at %s", self.base_url)
+            return True
         except Exception as exc:
             log.debug("Ollama is_available check failed: %s", exc)
             return False
 
-    def warmup(self) -> None:
+    def get_preferred_model(self, preferred: list[str]) -> str | None:
         """
-        Fire a trivial request to load the model into RAM without blocking the caller.
-        Intended to be called at run start so the model is warm by the time
-        real analysis begins.  Errors are silently logged — warmup failure is not fatal.
+        Returns the first model from `preferred` that is installed on the server,
+        or None if none match or the server is unreachable.
+        Matching is exact on the full name (e.g. "qwen3.5:9b").
         """
-        if not self.is_available():
-            log.debug("Ollama warmup skipped — server not available")
-            return
+        try:
+            resp = requests.get(f"{self.base_url}/api/tags", timeout=5)
+            resp.raise_for_status()
+            installed = {m.get("name", "") for m in resp.json().get("models", [])}
+            for model in preferred:
+                if model in installed:
+                    log.debug("Ollama preferred model selected: %s", model)
+                    return model
+            log.debug("Ollama: none of the preferred models are installed (installed=%s)", installed)
+            return None
+        except Exception as exc:
+            log.debug("Ollama get_preferred_model failed: %s", exc)
+            return None
 
-        def _send() -> None:
-            try:
-                log.info("Ollama warmup: loading %s into RAM…", self.model)
-                resp = requests.post(
-                    f"{self.base_url}/api/generate",
-                    json={"model": self.model, "prompt": "Hi", "stream": False},
-                    timeout=self.timeout,
-                )
-                resp.raise_for_status()
-                log.info("Ollama warmup complete (%s ready)", self.model)
-            except Exception as exc:
-                log.debug("Ollama warmup failed (non-fatal): %s", exc)
+    def get_loaded_model(self) -> str | None:
+        """
+        GET {base_url}/api/ps — returns the name of the currently loaded model,
+        or None if no model is loaded or the server is unreachable.
+        """
+        try:
+            resp = requests.get(f"{self.base_url}/api/ps", timeout=5)
+            resp.raise_for_status()
+            models = resp.json().get("models", [])
+            if models:
+                name = models[0].get("name", "")
+                log.debug("Ollama loaded model: %s", name)
+                return name or None
+            log.debug("Ollama: no model currently loaded")
+            return None
+        except Exception as exc:
+            log.debug("Ollama get_loaded_model failed: %s", exc)
+            return None
 
-        thread = threading.Thread(target=_send, daemon=True, name="ollama-warmup")
-        thread.start()
-
-    def analyze(self, prompt: str, reference_doc: str = "") -> str:
+    def analyze(self, prompt: str, reference_doc: str = "", model: str = "") -> str:
         """
         POST to {base_url}/api/generate with stream=False.
         Returns the response text.
         Raises OllamaUnavailableError on connection failure or timeout.
         Raises OllamaModelError if model not found (HTTP 404).
 
+        `model` must be provided — call get_loaded_model() first to obtain it.
+
         If reference_doc is non-empty it is prepended to the prompt under a
         [REFERENCE DOCUMENT] / [TASK] structure so the model has vehicle
         knowledge context before seeing the listings data.
         """
+        if not model:
+            raise OllamaModelError("No model specified for analyze() call")
         if reference_doc:
             prompt = f"[REFERENCE DOCUMENT]\n{reference_doc}\n\n[TASK]\n{prompt}"
 
         payload = {
-            "model":  self.model,
+            "model":  model,
             "prompt": prompt,
             "stream": False,
         }
@@ -109,20 +118,3 @@ class OllamaClient:
 
         return resp.json().get("response", "")
 
-    def unload(self) -> None:
-        """
-        Signal Ollama to evict the model from RAM immediately by sending
-        a generate request with keep_alive=0.
-        No-ops if the server is unreachable. Errors are silently logged.
-        """
-        try:
-            log.info("Ollama: unloading %s from RAM…", self.model)
-            resp = requests.post(
-                f"{self.base_url}/api/generate",
-                json={"model": self.model, "prompt": "", "keep_alive": 0},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            log.info("Ollama: %s unloaded", self.model)
-        except Exception as exc:
-            log.debug("Ollama unload failed (non-fatal): %s", exc)

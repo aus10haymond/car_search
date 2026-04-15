@@ -56,12 +56,6 @@ def run_once(
     """Run all profiles in sequence. Returns combined enriched listings from all profiles."""
     all_enriched: list[dict] = []
 
-    # Ollama pre-warm once before iterating profiles (shared backend)
-    if config.OLLAMA_ENABLED:
-        from analysis.ollama_client import OllamaClient
-        OllamaClient(config.OLLAMA_BASE_URL, config.OLLAMA_MODEL, config.OLLAMA_TIMEOUT).warmup()
-        log.debug("Ollama warmup started (fallback backend)")
-
     for profile in profiles:
         log.info("=" * 60)
         log.info("STARTING PROFILE: %s (%s)", profile.profile_id, profile.label)
@@ -380,8 +374,8 @@ def _log_run_header(run_id: str, run_at: str, dry_run: bool, profile: SearchProf
     max_price_str = f"${profile.max_price:,}" if profile.max_price is not None else "none"
     log.debug("  Filters: max_price=%s, max_mileage=%d, years=%d-%d",
               max_price_str, profile.max_mileage, profile.min_year, profile.max_year)
-    log.debug("  Ollama: %s (%s), Anthropic: %s (%s)",
-              config.OLLAMA_ENABLED, config.OLLAMA_MODEL,
+    log.debug("  Ollama: enabled=%s host=%s, Anthropic: enabled=%s model=%s",
+              config.OLLAMA_ENABLED, config.OLLAMA_NETWORK_HOST,
               config.ANTHROPIC_ENABLED, config.ANTHROPIC_MODEL)
 
 
@@ -477,7 +471,7 @@ def check_setup() -> None:
         for p in profiles:
             print(f"    [{p.profile_id}] {p.label} — "
                   f"{len(p.vehicles)} vehicle(s), "
-                  f"${p.max_price:,} max, "
+                  f"{'$' + f'{p.max_price:,}' if p.max_price is not None else 'no'} max, "
                   f"{len(p.email_to)} recipient(s)")
     except Exception as exc:
         print(f"  [!!] profiles.yaml error: {exc}")
@@ -485,11 +479,17 @@ def check_setup() -> None:
     print()
 
     from analysis.ollama_client import OllamaClient
-    ollama = OllamaClient(config.OLLAMA_BASE_URL, config.OLLAMA_MODEL, timeout=5)
-    if ollama.is_available():
-        print(f"  [OK] Ollama: reachable, model '{config.OLLAMA_MODEL}' found")
+    if config.OLLAMA_NETWORK_BASE_URL:
+        ollama = OllamaClient(config.OLLAMA_NETWORK_BASE_URL, timeout=5)
+        loaded = ollama.get_loaded_model()
+        if loaded:
+            print(f"  [OK] Ollama: reachable at {config.OLLAMA_NETWORK_HOST}, loaded model: {loaded}")
+        elif ollama.is_available():
+            print(f"  [--] Ollama: reachable at {config.OLLAMA_NETWORK_HOST} but no model loaded (will fall back to Anthropic)")
+        else:
+            print(f"  [--] Ollama: NOT reachable at {config.OLLAMA_NETWORK_HOST}")
     else:
-        print(f"  [--] Ollama: NOT available at {config.OLLAMA_BASE_URL} (model: {config.OLLAMA_MODEL})")
+        print("  [--] Ollama: OLLAMA_NETWORK_HOST not set in .env")
 
     from analysis.anthropic_client import AnthropicClient, AnthropicUnavailableError
     anthropic = AnthropicClient(config.ANTHROPIC_API_KEY, config.ANTHROPIC_MODEL, max_tokens=10)
