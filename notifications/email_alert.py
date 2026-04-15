@@ -213,23 +213,28 @@ def _build_html(
     run_time = datetime.now().strftime("%b %d, %Y %I:%M %p")
     top10    = listings[:10]
 
-    # VINs the LLM explicitly recommended.
-    # Fall back to top 3 by score if: no picks returned, or none of the picks
-    # appear in the displayed rows (e.g. LLM recommended a vehicle from a
-    # different model that isn't in this table's top 10).
-    def _score_fallback() -> set[str]:
-        return {
-            r["vin"]
-            for r in sorted(top10, key=lambda x: -(x.get("value_score") or 0))[:3]
-            if r.get("vin")
-        }
+    # Build the set of starred VINs — always 3 entries in the displayed table.
+    # Priority: LLM-recommended listings that appear in the top 10.
+    # When fewer than 3 LLM picks are visible, fill remaining slots with the
+    # highest-scored rows from the table (covers multi-vehicle profiles where
+    # the LLM's top picks fall outside the model-preference-sorted top 10).
+    def _top_scored_vins(exclude: set[str], n: int) -> set[str]:
+        result: set[str] = set()
+        for r in sorted(top10, key=lambda x: -(x.get("value_score") or 0)):
+            if len(result) >= n:
+                break
+            vin = r.get("vin")
+            if vin and vin not in exclude:
+                result.add(vin)
+        return result
 
     if llm_result.top_pick_vins:
-        top3_vins: set[str] = set(llm_result.top_pick_vins)
-        if not any(r.get("vin") in top3_vins for r in top10):
-            top3_vins = _score_fallback()
+        llm_vins = set(llm_result.top_pick_vins)
+        top3_vins: set[str] = {r.get("vin") for r in top10 if r.get("vin") in llm_vins}
+        if len(top3_vins) < 3:
+            top3_vins |= _top_scored_vins(exclude=top3_vins, n=3 - len(top3_vins))
     else:
-        top3_vins = _score_fallback()
+        top3_vins = _top_scored_vins(exclude=set(), n=3)
     drop_by_vin: dict[str, dict] = {d["vin"]: d for d in price_drops if d.get("vin")}
     new_vins = new_vins or set()
 
@@ -243,7 +248,7 @@ def _build_html(
     parts.append("<h3 style='margin-bottom:4px'>Top 10 Listings</h3>")
     parts.append(
         "<p style='font-size:12px;color:#666;margin-top:0'>"
-        "<b>★</b> = LLM top pick &nbsp;|&nbsp;"
+        "<b>★</b> = top pick (LLM recommended, or top value score if LLM pick isn't in table) &nbsp;|&nbsp;"
         "<span style='background:#fffde7;padding:1px 5px;border:1px solid #f0e68c'>&nbsp;</span>"
         " = price drop since last run &nbsp;|&nbsp;"
         "<span style='background:#27ae60;color:white;font-size:11px;padding:1px 5px;"

@@ -173,6 +173,72 @@ def test_new_and_drop_coexist_on_same_row():
     assert html.count(">NEW</span>") == 2
 
 
+# ── Star / top-pick logic ─────────────────────────────────────────────────────
+
+def _llm_with_picks(*vins: str) -> LLMResult:
+    return LLMResult(
+        analysis=None, backend_used="none", model_used="",
+        tokens_used=None, latency_ms=0, error=None,
+        top_pick_vins=list(vins),
+    )
+
+
+def _count_stars(html: str) -> int:
+    """Count how many table rows have the ★ marker.
+    Row entries look like <b>★ 3</b>; the legend has <b>★</b> (no space/digit).
+    """
+    return html.count("<b>★ ")
+
+
+def test_stars_all_three_llm_picks_in_top10():
+    """When all 3 LLM picks appear in the top 10, exactly those 3 rows are starred."""
+    listings = [_listing(vin=f"V{i:03d}", value_score=100 - i) for i in range(10)]
+    llm = _llm_with_picks("V000", "V003", "V007")
+    html = _build_html(listings, llm, [], {})
+    assert _count_stars(html) == 3
+    # Verify the starred rows are the LLM picks, not the top scorers
+    # V000 (highest score) is starred
+    assert "<b>★ 1</b>" in html
+    # V003 is row 4, V007 is row 8
+    assert "<b>★ 4</b>" in html
+    assert "<b>★ 8</b>" in html
+
+
+def test_stars_partial_llm_overlap_supplements_with_score():
+    """When only 1 LLM pick is in the top 10, the remaining 2 stars come from top score."""
+    # 10 listings with distinct VINs; only V002 is in the LLM picks
+    listings = [_listing(vin=f"V{i:03d}", value_score=float(100 - i)) for i in range(10)]
+    llm = _llm_with_picks("V002", "OUTSIDE_A", "OUTSIDE_B")
+    html = _build_html(listings, llm, [], {})
+    assert _count_stars(html) == 3
+    # V002 (LLM pick, row 3) must be starred
+    assert "<b>★ 3</b>" in html
+    # V000 and V001 are the top-scored remaining rows — they fill the other 2 slots
+    assert "<b>★ 1</b>" in html
+    assert "<b>★ 2</b>" in html
+
+
+def test_stars_no_llm_overlap_uses_top_score():
+    """When no LLM picks appear in the top 10, top-3-by-score are starred."""
+    listings = [_listing(vin=f"V{i:03d}", value_score=float(100 - i)) for i in range(10)]
+    llm = _llm_with_picks("OUTSIDE_1", "OUTSIDE_2", "OUTSIDE_3")
+    html = _build_html(listings, llm, [], {})
+    assert _count_stars(html) == 3
+    assert "<b>★ 1</b>" in html
+    assert "<b>★ 2</b>" in html
+    assert "<b>★ 3</b>" in html
+
+
+def test_stars_no_llm_picks_uses_top_score():
+    """When LLM returns no picks at all, top-3-by-score are starred."""
+    listings = [_listing(vin=f"V{i:03d}", value_score=float(100 - i)) for i in range(10)]
+    html = _build_html(listings, _no_llm(), [], {})
+    assert _count_stars(html) == 3
+    assert "<b>★ 1</b>" in html
+    assert "<b>★ 2</b>" in html
+    assert "<b>★ 3</b>" in html
+
+
 # ── DB: get_new_listings ──────────────────────────────────────────────────────
 
 def test_get_new_listings_all_new_on_empty_db():
