@@ -94,6 +94,7 @@ def enrich_listings(
     min_year: int = _SCORE_MIN_YEAR,
     model_preference: list[str] | None = None,
     hybrid_bonus: bool = True,
+    down_payment: int | None = None,
 ) -> list[dict]:
     """
     Enrich all listings in-place, computing value scores that require
@@ -110,6 +111,7 @@ def enrich_listings(
             min_year=min_year,
             model_preference=model_preference or [],
             hybrid_bonus=hybrid_bonus,
+            down_payment=down_payment,
         )
         for listing in listings
     ]
@@ -124,6 +126,7 @@ def enrich_listing(
     min_year: int = _SCORE_MIN_YEAR,
     model_preference: list[str] | None = None,
     hybrid_bonus: bool = True,
+    down_payment: int | None = None,
 ) -> dict:
     """
     Add computed fields to a listing dict:
@@ -140,7 +143,7 @@ def enrich_listing(
 
     listing["monthly_estimated"] = estimate_monthly_payment(
         price,
-        config.DOWN_PAYMENT,
+        down_payment if down_payment is not None else config.DOWN_PAYMENT,
         config.INTEREST_RATE,
         config.LOAN_TERM_MONTHS,
     )

@@ -17,13 +17,14 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class LLMResult:
-    analysis:     str | None        # The LLM's text output, or None if unavailable
-    backend_used: str               # "ollama" | "anthropic_api" | "none"
-    model_used:   str               # Specific model string e.g. "llama3.1:8b"
-    tokens_used:  int | None        # None for Ollama (not always available)
-    latency_ms:   int               # Wall-clock time for the LLM call
-    error:        str | None        # Error message if backend failed, else None
-    cache_hit:    bool | None = None  # True/False if Anthropic cache was checked; None otherwise
+    analysis:       str | None        # The LLM's text output, or None if unavailable
+    backend_used:   str               # "ollama" | "anthropic_api" | "none"
+    model_used:     str               # Specific model string e.g. "llama3.1:8b"
+    tokens_used:    int | None        # None for Ollama (not always available)
+    latency_ms:     int               # Wall-clock time for the LLM call
+    error:          str | None        # Error message if backend failed, else None
+    cache_hit:      bool | None = None  # True/False if Anthropic cache was checked; None otherwise
+    top_pick_vins:  list[str] = field(default_factory=list)  # VINs the LLM identified as top picks
 
 
 class LLMAnalyzer:
@@ -83,14 +84,16 @@ class LLMAnalyzer:
                     self.backend_used = "anthropic_api"
                     if config.OLLAMA_ENABLED:
                         self.ollama.unload()
+                    cleaned_text, top_pick_vins = self._parse_top_picks(text)
                     return LLMResult(
-                        analysis=text,
+                        analysis=cleaned_text,
                         backend_used="anthropic_api",
                         model_used=config.ANTHROPIC_MODEL,
                         tokens_used=None,
                         latency_ms=latency,
                         error=None,
                         cache_hit=cache_hit,
+                        top_pick_vins=top_pick_vins,
                     )
                 except AnthropicUnavailableError as exc:
                     log.warning("Anthropic API failed: %s — falling back to Ollama", exc)
@@ -109,13 +112,15 @@ class LLMAnalyzer:
                     log.info("LLM analysis complete via Ollama (%dms)", latency)
                     self.backend_used = "ollama"
                     self.ollama.unload()
+                    cleaned_text, top_pick_vins = self._parse_top_picks(text)
                     return LLMResult(
-                        analysis=text,
+                        analysis=cleaned_text,
                         backend_used="ollama",
                         model_used=config.OLLAMA_MODEL,
                         tokens_used=None,
                         latency_ms=latency,
                         error=None,
+                        top_pick_vins=top_pick_vins,
                     )
                 except (OllamaUnavailableError, OllamaModelError) as exc:
                     log.error("Ollama failed: %s — no LLM analysis available", exc)
@@ -134,6 +139,41 @@ class LLMAnalyzer:
             latency_ms=0,
             error="No LLM backend available (Ollama unavailable, Anthropic API not configured or disabled)",
         )
+
+    def _parse_top_picks(self, text: str) -> tuple[str, list[str]]:
+        """
+        Extract the TOP_PICKS line from the LLM response.
+
+        Returns (cleaned_text, list_of_vins).
+        The TOP_PICKS line is stripped from the returned text so it doesn't
+        appear in the email's analysis section.
+        """
+        id_to_vin = getattr(self, "_last_id_to_vin", {})
+        lines = text.splitlines()
+        top_pick_vins: list[str] = []
+        kept_lines: list[str] = []
+
+        for line in lines:
+            stripped = line.strip()
+            if stripped.upper().startswith("TOP_PICKS:"):
+                raw_ids = stripped[len("TOP_PICKS:"):].strip()
+                for part in raw_ids.split(","):
+                    try:
+                        row_id = int(part.strip())
+                        vin = id_to_vin.get(row_id, "")
+                        if vin:
+                            top_pick_vins.append(vin)
+                    except ValueError:
+                        pass
+            else:
+                kept_lines.append(line)
+
+        cleaned = "\n".join(kept_lines).rstrip()
+        if top_pick_vins:
+            log.debug("LLM top picks (VINs): %s", top_pick_vins)
+        else:
+            log.warning("LLM did not return a parseable TOP_PICKS line")
+        return cleaned, top_pick_vins
 
     def build_prompt(self, listings: list[dict]) -> str:
         """
@@ -174,11 +214,13 @@ class LLMAnalyzer:
             f"Listings shown: {total_shown}"
         )
 
-        # Build markdown table
-        table_header = "| Year | Make | Model | Trim | Price | Mileage | Est. Payment | Value Score | Hybrid |"
-        table_sep    = "|------|------|-------|------|-------|---------|--------------|-------------|--------|"
+        # Build markdown table — keep a mapping from row ID to VIN for top-pick parsing
+        self._last_id_to_vin: dict[int, str] = {}
+        table_header = "| ID | Year | Make | Model | Trim | Price | Mileage | Est. Payment | Value Score | Hybrid |"
+        table_sep    = "|----|------|------|-------|------|-------|---------|--------------|-------------|--------|"
         table_rows   = []
-        for r in top_listings:
+        for idx, r in enumerate(top_listings, start=1):
+            self._last_id_to_vin[idx] = r.get("vin") or ""
             trim    = (r.get("trim") or "")
             if r.get("is_hybrid"):
                 trim = f"[HYBRID] {trim}"
@@ -187,7 +229,7 @@ class LLMAnalyzer:
             payment = f"${r.get('monthly_carvana') or r.get('monthly_estimated') or 0:,.0f}/mo"
             score   = int(r.get("value_score") or 0)
             table_rows.append(
-                f"| {r.get('year')} | {r.get('make')} | {r.get('model')} | {trim} "
+                f"| {idx} | {r.get('year')} | {r.get('make')} | {r.get('model')} | {trim} "
                 f"| {price} | {mileage} | {payment} | {score} | {'Yes' if r.get('is_hybrid') else 'No'} |"
             )
 
@@ -207,7 +249,11 @@ class LLMAnalyzer:
             "3. Flag any listings that appear to be unusual (suspiciously low price, very high mileage for year, etc.).\n"
             "4. Note any patterns across the full dataset (e.g., 'RAV4 Hybrids are commanding a $3,000 premium over gas models in this dataset').\n"
             "5. Give one clear final recommendation with a brief rationale.\n\n"
-            "Keep the response under 600 words. Use plain language. Avoid filler phrases."
+            "Keep the response under 600 words. Use plain language. Avoid filler phrases.\n\n"
+            "At the very end of your response, on its own line, write exactly:\n"
+            "TOP_PICKS: <comma-separated IDs of your top 3 recommended listings>\n"
+            "Example: TOP_PICKS: 2,5,11\n"
+            "Use the ID column from the table above. Do not add any text after this line."
         )
 
         return (

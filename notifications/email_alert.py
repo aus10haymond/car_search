@@ -88,6 +88,8 @@ def send_summary(
     new_vins: set[str] | None = None,
     email_to: list[str] | None = None,
     profile_label: str = "Carvana Tracker",
+    show_financing: bool = True,
+    down_payment: int | None = None,
 ) -> bool:
     """
     Send an HTML email summary via Gmail API with the CSV attached.
@@ -115,7 +117,7 @@ def send_summary(
 
     subject = _build_subject(listings, price_drops, profile_label)
     html    = _build_html(listings, llm_result, price_drops, trends or {}, new_vins or set(),
-                          profile_label)
+                          profile_label, show_financing=show_financing, down_payment=down_payment)
 
     from_addr = (
         f"{config.EMAIL_FROM_NAME} <{config.GMAIL_SENDER}>"
@@ -205,16 +207,21 @@ def _build_html(
     trends: dict,
     new_vins: set[str] | None = None,
     profile_label: str = "Carvana Tracker",
+    show_financing: bool = True,
+    down_payment: int | None = None,
 ) -> str:
     run_time = datetime.now().strftime("%b %d, %Y %I:%M %p")
     top10    = listings[:10]
 
-    # Top 3 by value_score within top10 — marked as AI top picks
-    top3_vins: set[str] = {
-        r["vin"]
-        for r in sorted(top10, key=lambda x: -(x.get("value_score") or 0))[:3]
-        if r.get("vin")
-    }
+    # VINs the LLM explicitly recommended — fall back to top 3 by score if unavailable
+    if llm_result.top_pick_vins:
+        top3_vins: set[str] = set(llm_result.top_pick_vins)
+    else:
+        top3_vins = {
+            r["vin"]
+            for r in sorted(top10, key=lambda x: -(x.get("value_score") or 0))[:3]
+            if r.get("vin")
+        }
     drop_by_vin: dict[str, dict] = {d["vin"]: d for d in price_drops if d.get("vin")}
     new_vins = new_vins or set()
 
@@ -228,19 +235,20 @@ def _build_html(
     parts.append("<h3 style='margin-bottom:4px'>Top 10 Listings</h3>")
     parts.append(
         "<p style='font-size:12px;color:#666;margin-top:0'>"
-        "<b>★</b> = AI top pick by value score &nbsp;|&nbsp;"
+        "<b>★</b> = LLM top pick &nbsp;|&nbsp;"
         "<span style='background:#fffde7;padding:1px 5px;border:1px solid #f0e68c'>&nbsp;</span>"
         " = price drop since last run &nbsp;|&nbsp;"
         "<span style='background:#27ae60;color:white;font-size:11px;padding:1px 5px;"
         "border-radius:3px'>NEW</span> = first time seen"
         "</p>"
     )
+    financing_th = "<th>Est. Payment</th>" if show_financing else ""
     parts.append(
         "<table border='1' cellpadding='7' cellspacing='0' "
         "style='border-collapse:collapse;font-size:13px;width:100%'>"
         "<tr style='background:#f0f0f0;text-align:left'>"
-        "<th>#</th><th>Vehicle</th><th>Color</th><th>Trim</th><th>Price</th>"
-        "<th>Mileage</th><th>Est. Payment</th><th>Score</th><th>Hybrid</th><th></th>"
+        f"<th>#</th><th>Vehicle</th><th>Color</th><th>Trim</th><th>Price</th>"
+        f"<th>Mileage</th>{financing_th}<th>Score</th><th>Hybrid</th><th></th>"
         "</tr>"
     )
 
@@ -273,6 +281,10 @@ def _build_html(
 
         color_cell = (r.get("color_exterior") or "").strip()
 
+        financing_td = (
+            f"<td>${r.get('monthly_carvana') or r.get('monthly_estimated') or 0:,.0f}/mo</td>"
+            if show_financing else ""
+        )
         parts.append(
             f"<tr style='{row_bg}'>"
             f"<td style='text-align:center;white-space:nowrap'>{position}</td>"
@@ -284,7 +296,7 @@ def _build_html(
             f"<td style='color:#555'>{(r.get('trim') or '')[:28]}</td>"
             f"<td>{price_cell}</td>"
             f"<td>{f'{mileage:,}' if mileage else 'N/A'}</td>"
-            f"<td>${r.get('monthly_carvana') or r.get('monthly_estimated') or 0:,.0f}/mo</td>"
+            f"{financing_td}"
             f"<td style='text-align:center'>{int(r.get('value_score') or 0)}</td>"
             f"<td style='text-align:center'>{hybrid_cell}</td>"
             f"<td style='text-align:center'>{view_btn}</td>"
@@ -296,6 +308,13 @@ def _build_html(
         parts.append(
             "<p style='font-size:12px;color:#555;margin-top:4px'>"
             "Price drops are relative to the previous tracker run.</p>"
+        )
+    if show_financing:
+        _dp = down_payment if down_payment is not None else config.DOWN_PAYMENT
+        parts.append(
+            f"<p style='font-size:12px;color:#555;margin-top:4px'>"
+            f"Est. Payment assumes ${_dp:,} down, {config.INTEREST_RATE}% APR, "
+            f"{config.LOAN_TERM_MONTHS}-month term.</p>"
         )
 
     # ── LLM analysis ─────────────────────────────────────────────────────────

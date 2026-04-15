@@ -34,6 +34,8 @@ class SearchProfile:
     model_preference:         list[str] = field(default_factory=list)  # ordered best→worst; [] = no preference
     reference_doc_path:       Optional[str] = None
     excluded_trim_keywords:   list[str] = field(default_factory=list)  # case-insensitive substrings to drop
+    show_financing:           bool = True          # include Est. Payment column in email table
+    down_payment:             Optional[int] = None  # override config.DOWN_PAYMENT for this profile
 
 
 def load_profiles(path: str) -> list[SearchProfile]:
@@ -120,6 +122,8 @@ def load_profiles(path: str) -> list[SearchProfile]:
             model_preference=model_preference,
             reference_doc_path=raw.get("reference_doc_path"),
             excluded_trim_keywords=excluded_trim_keywords,
+            show_financing=bool(raw.get("show_financing", True)),
+            down_payment=int(raw["down_payment"]) if raw.get("down_payment") is not None else None,
         ))
 
     log.info("Loaded %d profile(s): %s", len(profiles), [p.profile_id for p in profiles])

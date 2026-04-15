@@ -132,6 +132,7 @@ def _run_profile(
             min_year=profile.min_year,
             model_preference=profile.model_preference,
             hybrid_bonus=has_hybrid_interest,
+            down_payment=profile.down_payment,
         )
         _pref = profile.model_preference
         _n    = len(_pref)
@@ -205,6 +206,8 @@ def _run_profile(
                 new_vins=new_vins,
                 email_to=profile.email_to,
                 profile_label=profile.label,
+                show_financing=profile.show_financing,
+                down_payment=profile.down_payment,
             )
             log.info("Email dispatch: %s", "sent" if sent else "failed")
         else:
