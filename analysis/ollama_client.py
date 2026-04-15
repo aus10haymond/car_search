@@ -110,7 +110,7 @@ class OllamaClient:
             raise OllamaUnavailableError(f"Cannot connect to Ollama at {self.base_url}") from exc
 
         if resp.status_code == 404:
-            raise OllamaModelError(f"Model '{self.model}' not found on Ollama server")
+            raise OllamaModelError(f"Model '{model}' not found on Ollama server")
         try:
             resp.raise_for_status()
         except requests.HTTPError as exc:
