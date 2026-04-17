@@ -304,15 +304,34 @@ def _deduplicate(all_raw: list[dict]) -> list[dict]:
 
 def _warm_up_ollama() -> None:
     """
-    Fire a short prompt at Ollama before any profile runs to ensure the model
-    is loaded into memory.  Without this, the first (or subsequent) profile's
-    analysis call has to both load the model AND complete inference inside the
-    single OLLAMA_TIMEOUT window, which frequently causes a timeout failure.
+    Select the best available Ollama server and warm it up before any profile
+    runs to ensure a model is loaded into memory.
+
+    When multiple servers are configured (OLLAMA_NETWORK_HOSTS), they are
+    probed in parallel and the fastest/best-provisioned one is chosen.
+    config.OLLAMA_NETWORK_BASE_URL is updated in-place so the rest of the
+    run uses the selected server.
     """
-    if not config.OLLAMA_ENABLED or not config.OLLAMA_NETWORK_BASE_URL:
+    if not config.OLLAMA_ENABLED:
         return
 
-    from analysis.ollama_client import OllamaClient
+    from analysis.ollama_client import OllamaClient, select_best_server
+
+    hosts = config.OLLAMA_NETWORK_HOSTS
+    if not hosts:
+        log.debug("No Ollama hosts configured — skipping warm-up")
+        return
+
+    if len(hosts) > 1:
+        best = select_best_server(hosts, config.OLLAMA_PREFERRED_MODELS)
+        if not best:
+            log.warning("No Ollama servers reachable — will fall back to Anthropic API")
+            config.OLLAMA_NETWORK_BASE_URL = ""
+            return
+        config.OLLAMA_NETWORK_BASE_URL = best
+    elif not config.OLLAMA_NETWORK_BASE_URL:
+        return
+
     client = OllamaClient(
         base_url=config.OLLAMA_NETWORK_BASE_URL,
         timeout=config.OLLAMA_TIMEOUT,

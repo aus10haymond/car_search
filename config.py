@@ -23,10 +23,21 @@ LOG_FILE   = "./carvana_results/tracker.log"
 # Reference doc is set per-profile in profiles.yaml via reference_doc_path.
 
 # Primary: Network Ollama (uses whatever model is currently loaded)
-OLLAMA_ENABLED          = True
-OLLAMA_NETWORK_HOST     = os.getenv("OLLAMA_NETWORK_HOST", "")
-OLLAMA_NETWORK_BASE_URL = f"http://{OLLAMA_NETWORK_HOST}" if OLLAMA_NETWORK_HOST else ""
-OLLAMA_TIMEOUT          = 600               # seconds (10 min max before Anthropic fallback)
+OLLAMA_ENABLED           = True
+OLLAMA_NETWORK_HOST      = os.getenv("OLLAMA_NETWORK_HOST", "")
+OLLAMA_NETWORK_HOST_2    = os.getenv("OLLAMA_NETWORK_HOST_2", "")
+# Active server URL — overwritten at startup by select_best_server() when
+# multiple hosts are configured.
+OLLAMA_NETWORK_BASE_URL  = f"http://{OLLAMA_NETWORK_HOST}" if OLLAMA_NETWORK_HOST else ""
+# All configured Ollama server URLs (used for server selection at startup).
+OLLAMA_NETWORK_HOSTS: list[str] = [
+    url for url in [
+        f"http://{OLLAMA_NETWORK_HOST}"   if OLLAMA_NETWORK_HOST   else "",
+        f"http://{OLLAMA_NETWORK_HOST_2}" if OLLAMA_NETWORK_HOST_2 else "",
+    ]
+    if url
+]
+OLLAMA_TIMEOUT           = 600              # seconds (10 min max before Anthropic fallback)
 
 # If no model is loaded, the first model from this list that is installed on the
 # server will be loaded. Order by preference (best instruction-follower first).
