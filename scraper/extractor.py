@@ -289,7 +289,11 @@ def normalize_vehicle(raw: dict, make: str, model: str, strategy: str) -> dict |
 
         # ── purchase in progress ─────────────────────────────────────────────
         # Schema.org offers.availability; also check various legacy status fields.
+        # Schema.org availability is a full URL, e.g. "http://schema.org/InStock".
+        # OutOfStock / SoldOut indicate PIP or sold; InStock is the only "available" value.
         availability = (offers.get("availability") or "").lower()
+        avail_not_instock = bool(availability) and "instock" not in availability
+
         status = (
             raw.get("status")
             or raw.get("inventoryStatus")
@@ -303,7 +307,7 @@ def normalize_vehicle(raw: dict, make: str, model: str, strategy: str) -> dict |
         )
         purchase_in_progress = (
             explicit_flag
-            or "progress" in availability
+            or avail_not_instock
             or "progress" in status
             or "pending"  in status
             or "reserved" in status
@@ -317,19 +321,21 @@ def normalize_vehicle(raw: dict, make: str, model: str, strategy: str) -> dict |
         )
 
         return {
-            "vin":                   str(vin),
-            "year":                  year,
-            "make":                  make,
-            "model":                 model,
-            "trim":                  str(trim).strip(),
-            "price":                 price,
-            "mileage":               mileage,
-            "monthly_carvana":       monthly,
-            "color_exterior":        str(color_ext).strip(),
-            "url":                   url,
-            "purchase_in_progress":  purchase_in_progress,
-            "extraction_strategy":   strategy,
-            "scraped_at":            datetime.now(timezone.utc).isoformat(),
+            "vin":                    str(vin),
+            "year":                   year,
+            "make":                   make,
+            "model":                  model,
+            "trim":                   str(trim).strip(),
+            "price":                  price,
+            "mileage":                mileage,
+            "monthly_carvana":        monthly,
+            "color_exterior":         str(color_ext).strip(),
+            "url":                    url,
+            "purchase_in_progress":   purchase_in_progress,
+            "is_recent":              False,  # updated by DOM pass in extract_listings
+            "is_carvana_price_drop":  False,  # updated by DOM pass in extract_listings
+            "extraction_strategy":    strategy,
+            "scraped_at":             datetime.now(timezone.utc).isoformat(),
         }
 
     except Exception as exc:
@@ -339,23 +345,36 @@ def normalize_vehicle(raw: dict, make: str, model: str, strategy: str) -> dict |
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
-def _extract_purchase_in_progress_slugs(html: str) -> set[str]:
+def _extract_status_slugs(html: str) -> tuple[set[str], set[str], set[str]]:
     """
-    Find vehicle cards in the search results page that carry a
-    'Purchase in Progress' indicator in the rendered DOM.
+    Single DOM pass that extracts three sets of vehicle slugs from the rendered
+    Carvana search results page:
 
-    Carvana renders this as a visible badge/text on the card, e.g.:
-      <span>Purchase In Progress</span>
-    or via data-qa / class attributes.
+      pip_slugs        — vehicles with a "Purchase In Progress" badge
+      recent_slugs     — vehicles with a "Recent" badge (newly added to inventory)
+      price_drop_slugs — vehicles with a "Price Drop" badge (Carvana-marked reduction)
 
-    Returns a set of URL slugs (the last path segment of /vehicle/<slug>)
-    for matching vehicles so callers can flag those listings.
+    Status badges (PIP / Recent) live in:
+      <div data-testid="status-tag-wrapper">
+        <div data-testid="text-only-*"><span>Recent</span></div>
+      </div>
+
+    Price Drop badges live in:
+      <div data-testid="deal-tags-wrapper">
+        ...
+        <span>Price Drop</span>
+        ...
+      </div>
+
+    Falls back to full-page text-node and attribute-based scans so future
+    markup changes don't silently break detection.
     """
     soup = BeautifulSoup(html, "html.parser")
-    slugs: set[str] = set()
+    pip_slugs:        set[str] = set()
+    recent_slugs:     set[str] = set()
+    price_drop_slugs: set[str] = set()
 
     def _slug_from_node(node) -> str | None:
-        """Walk up the DOM tree to find the nearest /vehicle/ link."""
         for _ in range(15):
             if node is None:
                 return None
@@ -365,33 +384,69 @@ def _extract_purchase_in_progress_slugs(html: str) -> set[str]:
             node = node.parent
         return None
 
-    # ── Text-node match ("Purchase In Progress" visible text) ────────────────
-    for text_node in soup.find_all(
-        string=re.compile(r"purchase\s+in\s+progress", re.IGNORECASE)
-    ):
-        slug = _slug_from_node(text_node.parent)
-        if slug:
-            slugs.add(slug)
+    _PIP_RE    = re.compile(r"purchase\s+in\s+progress", re.IGNORECASE)
+    _RECENT_RE = re.compile(r"^recent$", re.IGNORECASE)
+    _DROP_RE   = re.compile(r"^price\s+drop$", re.IGNORECASE)
 
-    # ── Attribute-based match (data-qa, data-testid, class names) ────────────
-    attr_patterns = (
-        '[data-qa*="progress"]',
-        '[data-qa*="in-progress"]',
-        '[data-testid*="progress"]',
-        '[data-testid*="in-progress"]',
-        '[class*="in-progress"]',
-        '[class*="inProgress"]',
-        '[class*="purchaseInProgress"]',
-    )
-    for selector in attr_patterns:
-        for el in soup.select(selector):
-            slug = _slug_from_node(el)
+    # ── Primary: status-tag-wrapper (PIP / Recent) ────────────────────────────
+    for wrapper in soup.select('[data-testid="status-tag-wrapper"]'):
+        text = wrapper.get_text(strip=True)
+        slug = _slug_from_node(wrapper)
+        if not slug:
+            continue
+        if _PIP_RE.search(text):
+            pip_slugs.add(slug)
+        elif _RECENT_RE.search(text):
+            recent_slugs.add(slug)
+
+    # ── Primary: deal-tags-wrapper (Price Drop) ───────────────────────────────
+    for wrapper in soup.select('[data-testid="deal-tags-wrapper"]'):
+        if _DROP_RE.search(wrapper.get_text(strip=True)):
+            slug = _slug_from_node(wrapper)
             if slug:
-                slugs.add(slug)
+                price_drop_slugs.add(slug)
 
-    if slugs:
-        log.debug("DOM purchase-in-progress slugs found: %s", slugs)
-    return slugs
+    # ── Fallback: full-page text-node scan ────────────────────────────────────
+    if not pip_slugs:
+        for node in soup.find_all(string=_PIP_RE):
+            slug = _slug_from_node(node.parent)
+            if slug:
+                pip_slugs.add(slug)
+
+    if not recent_slugs:
+        for node in soup.find_all(string=_RECENT_RE):
+            slug = _slug_from_node(node.parent)
+            if slug:
+                recent_slugs.add(slug)
+
+    if not price_drop_slugs:
+        for node in soup.find_all(string=_DROP_RE):
+            slug = _slug_from_node(node.parent)
+            if slug:
+                price_drop_slugs.add(slug)
+
+    # ── Fallback: attribute-based patterns for PIP ────────────────────────────
+    if not pip_slugs:
+        for selector in (
+            '[data-testid*="purchase-in-progress"]',
+            '[data-testid*="purchaseInProgress"]',
+            '[data-qa*="purchase-in-progress"]',
+            '[class*="purchaseInProgress"]',
+            '[class*="purchase-in-progress"]',
+        ):
+            for el in soup.select(selector):
+                slug = _slug_from_node(el)
+                if slug:
+                    pip_slugs.add(slug)
+
+    if pip_slugs:
+        log.debug("DOM purchase-in-progress slugs: %s", pip_slugs)
+    if recent_slugs:
+        log.debug("DOM recent slugs: %s", recent_slugs)
+    if price_drop_slugs:
+        log.debug("DOM price-drop slugs: %s", price_drop_slugs)
+
+    return pip_slugs, recent_slugs, price_drop_slugs
 
 
 def _extract_monthly_from_dom(html: str) -> dict[str, float]:
@@ -488,22 +543,29 @@ def extract_listings(html: str, make: str, model: str) -> list[dict]:
             else:
                 log.debug("DOM monthly map built but no slugs matched listing URLs")
 
-    # Flag any listings the DOM identifies as purchase-in-progress that the
-    # JSON strategies may have missed.
-    pip_slugs = _extract_purchase_in_progress_slugs(html)
-    if pip_slugs:
-        newly_flagged = 0
-        for listing in listings:
-            slug = (listing.get("url") or "").rstrip("/").split("/")[-1].split("?")[0]
-            if slug and slug in pip_slugs and not listing.get("purchase_in_progress"):
-                listing["purchase_in_progress"] = True
-                newly_flagged += 1
-        total_pip = sum(1 for v in listings if v.get("purchase_in_progress"))
-        if newly_flagged:
-            log.info(
-                "DOM flagged %d additional purchase-in-progress listing(s) (%d total)",
-                newly_flagged, total_pip,
-            )
+    # Single DOM pass — flags purchase-in-progress, recent, and price-drop listings.
+    pip_slugs, recent_slugs, price_drop_slugs = _extract_status_slugs(html)
+
+    for listing in listings:
+        slug = (listing.get("url") or "").rstrip("/").split("/")[-1].split("?")[0]
+        if not slug:
+            continue
+        if slug in pip_slugs and not listing.get("purchase_in_progress"):
+            listing["purchase_in_progress"] = True
+        if slug in recent_slugs:
+            listing["is_recent"] = True
+        if slug in price_drop_slugs:
+            listing["is_carvana_price_drop"] = True
+
+    pip_total    = sum(1 for v in listings if v.get("purchase_in_progress"))
+    recent_total = sum(1 for v in listings if v.get("is_recent"))
+    drop_total   = sum(1 for v in listings if v.get("is_carvana_price_drop"))
+    if pip_total:
+        log.info("purchase-in-progress listings flagged: %d", pip_total)
+    if recent_total:
+        log.info("recent (newly added) listings flagged: %d", recent_total)
+    if drop_total:
+        log.info("Carvana price-drop listings flagged: %d", drop_total)
 
     return listings
 

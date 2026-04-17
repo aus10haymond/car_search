@@ -277,9 +277,9 @@ def _build_html(
         "<p style='font-size:12px;color:#666;margin-top:0'>"
         "<b>★</b> = LLM top pick (top value score if no LLM analysis) &nbsp;|&nbsp;"
         "<span style='background:#fffde7;padding:1px 5px;border:1px solid #f0e68c'>&nbsp;</span>"
-        " = price drop since last run &nbsp;|&nbsp;"
+        " = price drop (▼ X% = tracked drop vs last run; ▼ Price Drop = Carvana badge) &nbsp;|&nbsp;"
         "<span style='background:#27ae60;color:white;font-size:11px;padding:1px 5px;"
-        "border-radius:3px'>NEW</span> = first time seen"
+        "border-radius:3px'>NEW</span> = first time seen or marked Recent by Carvana"
         "</p>"
     )
     financing_th = "<th>Est. Payment</th>" if show_financing else ""
@@ -297,18 +297,25 @@ def _build_html(
         url      = r.get("url") or "#"
         price    = r.get("price") or 0
         mileage  = r.get("mileage")
-        is_drop  = vin in drop_by_vin
-        is_pick  = vin in starred_vins
-        is_new   = vin in new_vins
+        is_db_drop   = vin in drop_by_vin
+        is_carvana_drop = bool(r.get("is_carvana_price_drop"))
+        is_drop      = is_db_drop or is_carvana_drop
+        is_pick      = vin in starred_vins
+        is_new       = vin in new_vins or bool(r.get("is_recent"))
 
         row_bg   = "background:#fffde7" if is_drop else ""
         position = f"<b>★ {i}</b>" if is_pick else str(i)
 
-        if is_drop:
+        if is_db_drop:
             drop_pct   = drop_by_vin[vin].get("drop_pct", "")
             price_cell = (
                 f"<b>${price:,.0f}</b>"
                 f"<br><span style='color:#27ae60;font-size:11px'>▼ {drop_pct}% drop</span>"
+            )
+        elif is_carvana_drop:
+            price_cell = (
+                f"<b>${price:,.0f}</b>"
+                f"<br><span style='color:#27ae60;font-size:11px'>▼ Price Drop</span>"
             )
         else:
             price_cell = f"${price:,.0f}"
@@ -344,10 +351,23 @@ def _build_html(
         )
 
     parts.append("</table>")
-    if any(r.get("vin") in drop_by_vin for r in table_listings):
+    has_db_drops     = any(r.get("vin") in drop_by_vin for r in table_listings)
+    has_carvana_drops = any(r.get("is_carvana_price_drop") for r in table_listings)
+    if has_db_drops and has_carvana_drops:
+        parts.append(
+            "<p style='font-size:12px;color:#555;margin-top:4px'>"
+            "▼ X% drops are relative to the previous tracker run. "
+            "▼ Price Drop is Carvana's own badge (reduction from their listing history).</p>"
+        )
+    elif has_db_drops:
         parts.append(
             "<p style='font-size:12px;color:#555;margin-top:4px'>"
             "Price drops are relative to the previous tracker run.</p>"
+        )
+    elif has_carvana_drops:
+        parts.append(
+            "<p style='font-size:12px;color:#555;margin-top:4px'>"
+            "▼ Price Drop indicates Carvana has reduced the listing price from their history.</p>"
         )
     if show_financing:
         _dp = down_payment if down_payment is not None else config.DOWN_PAYMENT
