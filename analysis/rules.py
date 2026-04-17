@@ -51,6 +51,9 @@ def apply_filters(
         year    = listing.get("year")
         trim    = (listing.get("trim") or "").lower()
 
+        if listing.get("purchase_in_progress"):
+            removed["purchase_in_progress"] += 1
+            continue
         if not price or price <= 0:
             removed["no_price"] += 1
             continue

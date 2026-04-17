@@ -287,24 +287,49 @@ def normalize_vehicle(raw: dict, make: str, model: str, strategy: str) -> dict |
             or ""
         )
 
+        # ── purchase in progress ─────────────────────────────────────────────
+        # Schema.org offers.availability; also check various legacy status fields.
+        availability = (offers.get("availability") or "").lower()
+        status = (
+            raw.get("status")
+            or raw.get("inventoryStatus")
+            or raw.get("listingStatus")
+            or ""
+        ).lower()
+        explicit_flag = bool(
+            raw.get("purchaseInProgress")
+            or raw.get("purchase_in_progress")
+            or raw.get("isPurchaseInProgress")
+        )
+        purchase_in_progress = (
+            explicit_flag
+            or "progress" in availability
+            or "progress" in status
+            or "pending"  in status
+            or "reserved" in status
+            or "hold"     in status
+        )
+
         log.debug(
-            "Normalized via %s: %s %s %s %s — $%s",
+            "Normalized via %s: %s %s %s %s — $%s%s",
             strategy, year, make, model, trim, price,
+            " [PURCHASE IN PROGRESS]" if purchase_in_progress else "",
         )
 
         return {
-            "vin":                  str(vin),
-            "year":                 year,
-            "make":                 make,
-            "model":                model,
-            "trim":                 str(trim).strip(),
-            "price":                price,
-            "mileage":              mileage,
-            "monthly_carvana":      monthly,
-            "color_exterior":       str(color_ext).strip(),
-            "url":                  url,
-            "extraction_strategy":  strategy,
-            "scraped_at":           datetime.now(timezone.utc).isoformat(),
+            "vin":                   str(vin),
+            "year":                  year,
+            "make":                  make,
+            "model":                 model,
+            "trim":                  str(trim).strip(),
+            "price":                 price,
+            "mileage":               mileage,
+            "monthly_carvana":       monthly,
+            "color_exterior":        str(color_ext).strip(),
+            "url":                   url,
+            "purchase_in_progress":  purchase_in_progress,
+            "extraction_strategy":   strategy,
+            "scraped_at":            datetime.now(timezone.utc).isoformat(),
         }
 
     except Exception as exc:
@@ -313,6 +338,61 @@ def normalize_vehicle(raw: dict, make: str, model: str, strategy: str) -> dict |
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
+
+def _extract_purchase_in_progress_slugs(html: str) -> set[str]:
+    """
+    Find vehicle cards in the search results page that carry a
+    'Purchase in Progress' indicator in the rendered DOM.
+
+    Carvana renders this as a visible badge/text on the card, e.g.:
+      <span>Purchase In Progress</span>
+    or via data-qa / class attributes.
+
+    Returns a set of URL slugs (the last path segment of /vehicle/<slug>)
+    for matching vehicles so callers can flag those listings.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    slugs: set[str] = set()
+
+    def _slug_from_node(node) -> str | None:
+        """Walk up the DOM tree to find the nearest /vehicle/ link."""
+        for _ in range(15):
+            if node is None:
+                return None
+            link = node.find("a", href=lambda h: h and "/vehicle/" in h)
+            if link:
+                return str(link["href"]).rstrip("/").split("/")[-1].split("?")[0] or None
+            node = node.parent
+        return None
+
+    # ── Text-node match ("Purchase In Progress" visible text) ────────────────
+    for text_node in soup.find_all(
+        string=re.compile(r"purchase\s+in\s+progress", re.IGNORECASE)
+    ):
+        slug = _slug_from_node(text_node.parent)
+        if slug:
+            slugs.add(slug)
+
+    # ── Attribute-based match (data-qa, data-testid, class names) ────────────
+    attr_patterns = (
+        '[data-qa*="progress"]',
+        '[data-qa*="in-progress"]',
+        '[data-testid*="progress"]',
+        '[data-testid*="in-progress"]',
+        '[class*="in-progress"]',
+        '[class*="inProgress"]',
+        '[class*="purchaseInProgress"]',
+    )
+    for selector in attr_patterns:
+        for el in soup.select(selector):
+            slug = _slug_from_node(el)
+            if slug:
+                slugs.add(slug)
+
+    if slugs:
+        log.debug("DOM purchase-in-progress slugs found: %s", slugs)
+    return slugs
+
 
 def _extract_monthly_from_dom(html: str) -> dict[str, float]:
     """
@@ -407,6 +487,23 @@ def extract_listings(html: str, make: str, model: str) -> list[dict]:
                 log.info("Backfilled monthly_carvana for %d/%d listings from DOM", filled, len(listings))
             else:
                 log.debug("DOM monthly map built but no slugs matched listing URLs")
+
+    # Flag any listings the DOM identifies as purchase-in-progress that the
+    # JSON strategies may have missed.
+    pip_slugs = _extract_purchase_in_progress_slugs(html)
+    if pip_slugs:
+        newly_flagged = 0
+        for listing in listings:
+            slug = (listing.get("url") or "").rstrip("/").split("/")[-1].split("?")[0]
+            if slug and slug in pip_slugs and not listing.get("purchase_in_progress"):
+                listing["purchase_in_progress"] = True
+                newly_flagged += 1
+        total_pip = sum(1 for v in listings if v.get("purchase_in_progress"))
+        if newly_flagged:
+            log.info(
+                "DOM flagged %d additional purchase-in-progress listing(s) (%d total)",
+                newly_flagged, total_pip,
+            )
 
     return listings
 
