@@ -204,6 +204,7 @@ def _run_profile(
                 profile_label=profile.label,
                 show_financing=profile.show_financing,
                 down_payment=profile.down_payment,
+                num_vehicles=len(profile.vehicles),
             )
             log.info("Email dispatch: %s", "sent" if sent else "failed")
         else:

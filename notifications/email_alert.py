@@ -90,6 +90,7 @@ def send_summary(
     profile_label: str = "Carvana Tracker",
     show_financing: bool = True,
     down_payment: int | None = None,
+    num_vehicles: int = 1,
 ) -> bool:
     """
     Send an HTML email summary via Gmail API with the CSV attached.
@@ -117,7 +118,8 @@ def send_summary(
 
     subject = _build_subject(listings, price_drops, profile_label)
     html    = _build_html(listings, llm_result, price_drops, trends or {}, new_vins or set(),
-                          profile_label, show_financing=show_financing, down_payment=down_payment)
+                          profile_label, show_financing=show_financing, down_payment=down_payment,
+                          num_vehicles=num_vehicles)
 
     from_addr = (
         f"{config.EMAIL_FROM_NAME} <{config.GMAIL_SENDER}>"
@@ -209,18 +211,41 @@ def _build_html(
     profile_label: str = "Carvana Tracker",
     show_financing: bool = True,
     down_payment: int | None = None,
+    num_vehicles: int = 1,
 ) -> str:
     run_time = datetime.now().strftime("%b %d, %Y %I:%M %p")
-    top10    = listings[:10]
 
-    # Build the set of starred VINs — always 3 entries in the displayed table.
-    # Priority: LLM-recommended listings that appear in the top 10.
-    # When fewer than 3 LLM picks are visible, fill remaining slots with the
-    # highest-scored rows from the table (covers multi-vehicle profiles where
-    # the LLM's top picks fall outside the model-preference-sorted top 10).
-    def _top_scored_vins(exclude: set[str], n: int) -> set[str]:
+    # ── Build table listing set ───────────────────────────────────────────────
+    if num_vehicles > 1:
+        # Top 5 per model, preserving the existing sort order (model preference,
+        # then value_score descending — applied in main.py before this point).
+        seen_counts: dict[tuple[str, str], int] = {}
+        table_listings: list[dict] = []
+        for r in listings:
+            key = (r.get("make") or "", r.get("model") or "")
+            count = seen_counts.get(key, 0)
+            if count < 5:
+                table_listings.append(r)
+                seen_counts[key] = count + 1
+        table_label = "Top 5 per Model"
+    else:
+        table_listings = listings[:15]
+        table_label = "Top 15 Listings"
+
+    # Ensure every VIN the LLM identified as a top pick appears in the table.
+    if llm_result.top_pick_vins:
+        table_vin_set = {r.get("vin") for r in table_listings if r.get("vin")}
+        missing = [v for v in llm_result.top_pick_vins if v and v not in table_vin_set]
+        if missing:
+            vin_to_listing = {r.get("vin"): r for r in listings if r.get("vin")}
+            for vin in missing:
+                if vin in vin_to_listing:
+                    table_listings.append(vin_to_listing[vin])
+
+    # ── Determine starred VINs ────────────────────────────────────────────────
+    def _top_scored_vins(rows: list[dict], exclude: set[str], n: int) -> set[str]:
         result: set[str] = set()
-        for r in sorted(top10, key=lambda x: -(x.get("value_score") or 0)):
+        for r in sorted(rows, key=lambda x: -(x.get("value_score") or 0)):
             if len(result) >= n:
                 break
             vin = r.get("vin")
@@ -229,12 +254,14 @@ def _build_html(
         return result
 
     if llm_result.top_pick_vins:
-        llm_vins = set(llm_result.top_pick_vins)
-        top3_vins: set[str] = {r.get("vin") for r in top10 if r.get("vin") in llm_vins}
-        if len(top3_vins) < 3:
-            top3_vins |= _top_scored_vins(exclude=top3_vins, n=3 - len(top3_vins))
+        llm_pick_set = set(llm_result.top_pick_vins)
+        starred_vins: set[str] = {
+            r.get("vin") for r in table_listings if r.get("vin") in llm_pick_set
+        }
     else:
-        top3_vins = _top_scored_vins(exclude=set(), n=3)
+        # No LLM picks — fall back to top 3 by value score
+        starred_vins = _top_scored_vins(table_listings, exclude=set(), n=3)
+
     drop_by_vin: dict[str, dict] = {d["vin"]: d for d in price_drops if d.get("vin")}
     new_vins = new_vins or set()
 
@@ -244,11 +271,11 @@ def _build_html(
         f"<p style='color:#555;margin-top:0'>Found <b>{len(listings)}</b> listings matching your filters.</p>",
     ]
 
-    # ── Top 10 table ──────────────────────────────────────────────────────────
-    parts.append("<h3 style='margin-bottom:4px'>Top 10 Listings</h3>")
+    # ── Table ─────────────────────────────────────────────────────────────────
+    parts.append(f"<h3 style='margin-bottom:4px'>{table_label}</h3>")
     parts.append(
         "<p style='font-size:12px;color:#666;margin-top:0'>"
-        "<b>★</b> = top pick (LLM recommended, or top value score if LLM pick isn't in table) &nbsp;|&nbsp;"
+        "<b>★</b> = LLM top pick (top value score if no LLM analysis) &nbsp;|&nbsp;"
         "<span style='background:#fffde7;padding:1px 5px;border:1px solid #f0e68c'>&nbsp;</span>"
         " = price drop since last run &nbsp;|&nbsp;"
         "<span style='background:#27ae60;color:white;font-size:11px;padding:1px 5px;"
@@ -265,13 +292,13 @@ def _build_html(
         "</tr>"
     )
 
-    for i, r in enumerate(top10, start=1):
+    for i, r in enumerate(table_listings, start=1):
         vin      = r.get("vin") or ""
         url      = r.get("url") or "#"
         price    = r.get("price") or 0
         mileage  = r.get("mileage")
         is_drop  = vin in drop_by_vin
-        is_pick  = vin in top3_vins
+        is_pick  = vin in starred_vins
         is_new   = vin in new_vins
 
         row_bg   = "background:#fffde7" if is_drop else ""
@@ -317,7 +344,7 @@ def _build_html(
         )
 
     parts.append("</table>")
-    if any(r.get("vin") in drop_by_vin for r in top10):
+    if any(r.get("vin") in drop_by_vin for r in table_listings):
         parts.append(
             "<p style='font-size:12px;color:#555;margin-top:4px'>"
             "Price drops are relative to the previous tracker run.</p>"
