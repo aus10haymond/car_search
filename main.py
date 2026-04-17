@@ -56,6 +56,8 @@ def run_once(
     """Run all profiles in sequence. Returns combined enriched listings from all profiles."""
     all_enriched: list[dict] = []
 
+    _warm_up_ollama()
+
     for profile in profiles:
         log.info("=" * 60)
         log.info("STARTING PROFILE: %s (%s)", profile.profile_id, profile.label)
@@ -299,6 +301,24 @@ def _deduplicate(all_raw: list[dict]) -> list[dict]:
 
 
 # ── LLM ──────────────────────────────────────────────────────────────────────
+
+def _warm_up_ollama() -> None:
+    """
+    Fire a short prompt at Ollama before any profile runs to ensure the model
+    is loaded into memory.  Without this, the first (or subsequent) profile's
+    analysis call has to both load the model AND complete inference inside the
+    single OLLAMA_TIMEOUT window, which frequently causes a timeout failure.
+    """
+    if not config.OLLAMA_ENABLED or not config.OLLAMA_NETWORK_BASE_URL:
+        return
+
+    from analysis.ollama_client import OllamaClient
+    client = OllamaClient(
+        base_url=config.OLLAMA_NETWORK_BASE_URL,
+        timeout=config.OLLAMA_TIMEOUT,
+    )
+    client.warm_up(config.OLLAMA_PREFERRED_MODELS)
+
 
 def _run_llm(
     listings: list[dict],

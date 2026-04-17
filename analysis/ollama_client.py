@@ -75,6 +75,42 @@ class OllamaClient:
             log.debug("Ollama get_loaded_model failed: %s", exc)
             return None
 
+    def warm_up(self, preferred_models: list[str]) -> str | None:
+        """
+        Ensure a model is loaded and ready before the main analysis runs.
+
+        1. If a model is already loaded, return its name immediately.
+        2. Otherwise find the first preferred model that is installed and send
+           a short prompt to force Ollama to load it into memory.
+
+        Returns the loaded model name on success, or None if Ollama is
+        unreachable, no preferred model is installed, or the load times out.
+        Never raises.
+        """
+        # Fast path — model already in memory
+        loaded = self.get_loaded_model()
+        if loaded:
+            log.info("Ollama warm-up: model already loaded (%s) — skipping", loaded)
+            return loaded
+
+        model = self.get_preferred_model(preferred_models)
+        if not model:
+            log.warning("Ollama warm-up: no preferred model installed — skipping")
+            return None
+
+        log.info(
+            "Ollama warm-up: no model loaded — sending ping to load %s "
+            "(timeout=%ss, this may take a moment)…",
+            model, self.timeout,
+        )
+        try:
+            self.analyze("Reply with only the word OK.", model=model)
+            log.info("Ollama warm-up complete — %s is loaded and ready", model)
+            return model
+        except (OllamaUnavailableError, OllamaModelError) as exc:
+            log.warning("Ollama warm-up failed: %s", exc)
+            return None
+
     def analyze(self, prompt: str, reference_doc: str = "", model: str = "") -> str:
         """
         POST to {base_url}/api/generate with stream=False.
