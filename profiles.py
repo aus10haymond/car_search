@@ -4,6 +4,7 @@ Profiles are loaded from profiles.yaml at startup.
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -130,14 +131,72 @@ def load_profiles(path: str) -> list[SearchProfile]:
     return profiles
 
 
-def resolve_reference_doc(profile: SearchProfile) -> str:
+def _tokens(text: str) -> list[str]:
+    """Lowercase words with 2+ characters from make/model strings."""
+    return [t for t in re.sub(r"[^a-z0-9]", " ", text.lower()).split() if len(t) >= 2]
+
+
+def _find_vehicle_doc(make: str, model: str, ref_dir: Path) -> Path | None:
+    """
+    Return the best-matching .md file in ref_dir for a given make/model,
+    or None if no file scores at least 1 token match.
+
+    Scoring: count how many normalized make+model tokens appear as substrings
+    in the normalized filename. Highest score wins.
+    """
+    query = _tokens(f"{make} {model}")
+    if not query or not ref_dir.is_dir():
+        return None
+
+    best_path, best_score = None, 0
+    for f in ref_dir.glob("*.md"):
+        fname_norm = re.sub(r"[^a-z0-9]", " ", f.stem.lower())
+        score = sum(1 for t in query if t in fname_norm)
+        if score > best_score:
+            best_score, best_path = score, f
+
+    return best_path if best_score > 0 else None
+
+
+def _auto_discover_reference_docs(profile: "SearchProfile") -> str:
+    """
+    Look in VEHICLE_REFERENCE_DIR for a matching .md file for each vehicle
+    in the profile. Returns the concatenated content of all matched docs
+    (separated by headers), or "" if none are found.
+    """
+    ref_dir = Path(config.VEHICLE_REFERENCE_DIR)
+    if not ref_dir.is_dir():
+        return ""
+
+    sections: list[str] = []
+    for make, model in profile.vehicles:
+        doc_path = _find_vehicle_doc(make, model, ref_dir)
+        if doc_path:
+            text = doc_path.read_text(encoding="utf-8").strip()
+            if text:
+                log.info(
+                    "[%s] Auto-discovered reference doc for %s %s: %s (%d chars)",
+                    profile.profile_id, make, model, doc_path.name, len(text),
+                )
+                sections.append(text)
+        else:
+            log.debug(
+                "[%s] No reference doc found in %s for %s %s",
+                profile.profile_id, ref_dir, make, model,
+            )
+
+    return "\n\n---\n\n".join(sections)
+
+
+def resolve_reference_doc(profile: "SearchProfile") -> str:
     """
     Load and return the reference doc text for a profile.
 
     Fallback chain:
       1. profile.reference_doc_path — if set and file exists, use it
-      2. config.REFERENCE_DOC_PATH  — global fallback, if file exists
-      3. ""                         — no reference data; LLM prompt will note this
+      2. Auto-discover per-vehicle docs from VEHICLE_REFERENCE_DIR
+      3. config.REFERENCE_DOC_PATH  — global fallback, if file exists
+      4. ""                         — no reference data; LLM prompt will note this
     """
     # Step 1: profile-specific path
     if profile.reference_doc_path:
@@ -151,10 +210,15 @@ def resolve_reference_doc(profile: SearchProfile) -> str:
             log.warning("[%s] Reference doc at %s is empty — falling back to global",
                         profile.profile_id, p)
         else:
-            log.warning("[%s] Reference doc not found at '%s' — falling back to global",
+            log.warning("[%s] Reference doc not found at '%s' — falling back to auto-discovery",
                         profile.profile_id, p)
 
-    # Step 2: global fallback
+    # Step 2: auto-discover per-vehicle docs from vehicle_reference/
+    discovered = _auto_discover_reference_docs(profile)
+    if discovered:
+        return discovered
+
+    # Step 3: global fallback
     global_path = getattr(config, "REFERENCE_DOC_PATH", "")
     if global_path:
         gp = Path(global_path)

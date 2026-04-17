@@ -92,8 +92,17 @@ class LLMAnalyzer:
             if loaded_model:
                 t0 = time.monotonic()
                 try:
+                    ollama_ref = self._reference_doc
+                    max_chars  = config.OLLAMA_REF_DOC_MAX_CHARS
+                    if max_chars and ollama_ref and len(ollama_ref) > max_chars:
+                        log.warning(
+                            "Reference doc truncated from %d to %d chars for Ollama "
+                            "(full doc is still sent to Anthropic API)",
+                            len(ollama_ref), max_chars,
+                        )
+                        ollama_ref = ollama_ref[:max_chars]
                     text = self.ollama.analyze(
-                        prompt, reference_doc=self._reference_doc, model=loaded_model
+                        prompt, reference_doc=ollama_ref, model=loaded_model
                     )
                     latency = int((time.monotonic() - t0) * 1000)
                     log.info(

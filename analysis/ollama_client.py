@@ -131,9 +131,10 @@ class OllamaClient:
             prompt = f"[REFERENCE DOCUMENT]\n{reference_doc}\n\n[TASK]\n{prompt}"
 
         payload = {
-            "model":  model,
-            "prompt": prompt,
-            "stream": False,
+            "model":   model,
+            "prompt":  prompt,
+            "stream":  False,
+            "options": {"think": False},  # disable Qwen3 chain-of-thought thinking tokens
         }
         try:
             resp = requests.post(
@@ -206,7 +207,7 @@ def _benchmark_server(base_url: str, model: str, timeout: int) -> float | None:
                 "model":   model,
                 "prompt":  "List five colors.",
                 "stream":  False,
-                "options": {"num_predict": 20},
+                "options": {"num_predict": 20, "think": False},
             },
             timeout=timeout,
         )

@@ -7,6 +7,8 @@ __pycache__/
 .vscode/
 .claude
 scrape_one.py
+setup_gmail_oauth.py
+test_ollama_crv.py
 debug_page.html
 run_tracker.bat
 profiles.yaml

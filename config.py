@@ -15,7 +15,8 @@ LOAN_TERM_MONTHS = 60
 CHECK_INTERVAL_HOURS = 24
 
 # ── Output ────────────────────────────────────────────────────────────────────
-OUTPUT_DIR = "./carvana_results"
+OUTPUT_DIR            = "./carvana_results"
+VEHICLE_REFERENCE_DIR = "./vehicle_reference"  # per-model reference docs for auto-discovery
 DB_PATH    = "./carvana_results/history.db"
 LOG_FILE   = "./carvana_results/tracker.log"
 
@@ -23,7 +24,7 @@ LOG_FILE   = "./carvana_results/tracker.log"
 # Reference doc is set per-profile in profiles.yaml via reference_doc_path.
 
 # Primary: Network Ollama (uses whatever model is currently loaded)
-OLLAMA_ENABLED           = True
+OLLAMA_ENABLED           = False
 OLLAMA_NETWORK_HOST      = os.getenv("OLLAMA_NETWORK_HOST", "")
 OLLAMA_NETWORK_HOST_2    = os.getenv("OLLAMA_NETWORK_HOST_2", "")
 # Active server URL — overwritten at startup by select_best_server() when
@@ -38,6 +39,11 @@ OLLAMA_NETWORK_HOSTS: list[str] = [
     if url
 ]
 OLLAMA_TIMEOUT           = 600              # seconds (10 min max before Anthropic fallback)
+# Reference doc is truncated to this length before being sent to Ollama.
+# Local 9B models are slow at evaluating large contexts; the full doc is
+# still sent to Anthropic which handles large contexts without issue.
+# Set to 0 to disable truncation (not recommended for large reference docs).
+OLLAMA_REF_DOC_MAX_CHARS = 6000
 
 # If no model is loaded, the first model from this list that is installed on the
 # server will be loaded. Order by preference (best instruction-follower first).
