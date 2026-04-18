@@ -450,9 +450,23 @@ def _run_llm(
                 "LLM analysis — %s: %d listings, %d-char ref doc",
                 make, len(make_listings), len(ref_doc),
             )
-            log.debug("Prompt size for %s: ~%d tokens", make, len(analyzer.build_prompt(make_listings)) // 4)
             result = analyzer.analyze(make_listings, reference_doc=ref_doc)
             per_make_results.append((make, result))
+
+        # Cross-model synthesis: one final call that sees all makes together
+        if len(makes) > 1:
+            successful = [
+                (make, result.analysis)
+                for make, result in per_make_results
+                if result.analysis
+            ]
+            if successful:
+                log.info("Running cross-model synthesis across %d makes", len(successful))
+                synthesis_prompt = analyzer.build_synthesis_prompt(listings, successful)
+                synthesis_result = analyzer.analyze(
+                    listings, reference_doc="", _prompt_override=synthesis_prompt
+                )
+                per_make_results.append(("_synthesis", synthesis_result))
 
         return _merge_llm_results(per_make_results)
     finally:
@@ -478,7 +492,8 @@ def _merge_llm_results(per_make_results: list[tuple[str, LLMResult]]) -> LLMResu
         return per_make_results[0][1]
 
     analysis_sections: list[str] = []
-    all_vins: list[str] = []
+    synthesis_result: LLMResult | None = None
+    per_make_vins: list[str] = []
     total_latency = 0
     total_tokens = 0
     last_backend = "none"
@@ -487,10 +502,6 @@ def _merge_llm_results(per_make_results: list[tuple[str, LLMResult]]) -> LLMResu
     errors: list[str] = []
 
     for make, result in per_make_results:
-        if result.analysis:
-            analysis_sections.append(f"### {make}\n\n{result.analysis}")
-        if result.top_pick_vins:
-            all_vins.extend(result.top_pick_vins)
         total_latency += result.latency_ms
         if result.tokens_used:
             total_tokens += result.tokens_used
@@ -504,6 +515,24 @@ def _merge_llm_results(per_make_results: list[tuple[str, LLMResult]]) -> LLMResu
         if result.error:
             errors.append(f"{make}: {result.error}")
 
+        if make == "_synthesis":
+            synthesis_result = result
+        else:
+            if result.analysis:
+                analysis_sections.append(f"### {make}\n\n{result.analysis}")
+            if result.top_pick_vins:
+                per_make_vins.extend(result.top_pick_vins)
+
+    # Append synthesis section with a clean header (no "### _synthesis")
+    if synthesis_result and synthesis_result.analysis:
+        analysis_sections.append(f"---\n\n## Overall Recommendation\n\n{synthesis_result.analysis}")
+
+    # Synthesis picks are cross-model winners; use them first if available
+    if synthesis_result and synthesis_result.top_pick_vins:
+        final_vins = synthesis_result.top_pick_vins
+    else:
+        final_vins = per_make_vins
+
     return LLMResult(
         analysis="\n\n".join(analysis_sections) if analysis_sections else None,
         backend_used=last_backend,
@@ -512,7 +541,7 @@ def _merge_llm_results(per_make_results: list[tuple[str, LLMResult]]) -> LLMResu
         latency_ms=total_latency,
         error="; ".join(errors) if errors else None,
         cache_hit=any_cache_hit,
-        top_pick_vins=all_vins,
+        top_pick_vins=final_vins,
     )
 
 

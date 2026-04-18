@@ -52,7 +52,12 @@ class LLMAnalyzer:
         self._show_financing  = show_financing
         self._down_payment    = down_payment if down_payment is not None else config.DOWN_PAYMENT
 
-    def analyze(self, listings: list[dict], reference_doc: str | None = None) -> LLMResult:
+    def analyze(
+        self,
+        listings: list[dict],
+        reference_doc: str | None = None,
+        _prompt_override: str | None = None,
+    ) -> LLMResult:
         """
         1. If OLLAMA_ENABLED and network Ollama has a model loaded:
                try ollama.analyze(prompt, model=loaded_model)
@@ -75,7 +80,11 @@ class LLMAnalyzer:
         the doc set at __init__ time if not provided.
         """
         effective_ref = reference_doc if reference_doc is not None else self._reference_doc
-        prompt = self.build_prompt(listings)
+        if _prompt_override is not None:
+            prompt = _prompt_override
+            # _last_id_to_vin must already be set by the caller (e.g. build_synthesis_prompt)
+        else:
+            prompt = self.build_prompt(listings)
 
         # ── Step 1: Network Ollama (primary) ──────────────────────────────────
         if config.OLLAMA_ENABLED and config.OLLAMA_NETWORK_BASE_URL:
@@ -213,17 +222,52 @@ class LLMAnalyzer:
             log.warning("LLM did not return a parseable TOP_PICKS line")
         return cleaned, top_pick_vins
 
+    def _build_listings_table(self, listings: list[dict]) -> str:
+        """
+        Build the markdown listings table and set self._last_id_to_vin.
+        Caps at 30 rows. Returns the table string.
+        Shared by build_prompt() and build_synthesis_prompt().
+        """
+        top_listings = listings[:min(30, len(listings))]
+        self._last_id_to_vin: dict[int, str] = {}
+
+        if self._show_financing:
+            header = "| ID | Year | Make | Model | Trim | Price | Mileage | Est. Payment | Value Score | Hybrid |"
+            sep    = "|----|------|------|-------|------|-------|---------|--------------|-------------|--------|"
+        else:
+            header = "| ID | Year | Make | Model | Trim | Price | Mileage | Value Score | Hybrid |"
+            sep    = "|----|------|------|-------|------|-------|---------|-------------|--------|"
+
+        rows: list[str] = []
+        for idx, r in enumerate(top_listings, start=1):
+            self._last_id_to_vin[idx] = r.get("vin") or ""
+            trim    = "[HYBRID] " + (r.get("trim") or "") if r.get("is_hybrid") else (r.get("trim") or "")
+            price   = f"${round(r.get('price') or 0):,}"
+            mileage = f"{round((r.get('mileage') or 0) / 100) * 100:,}"
+            score   = int(r.get("value_score") or 0)
+            if self._show_financing:
+                payment = f"${r.get('monthly_carvana') or r.get('monthly_estimated') or 0:,.0f}/mo"
+                rows.append(
+                    f"| {idx} | {r.get('year')} | {r.get('make')} | {r.get('model')} | {trim} "
+                    f"| {price} | {mileage} | {payment} | {score} | {'Yes' if r.get('is_hybrid') else 'No'} |"
+                )
+            else:
+                rows.append(
+                    f"| {idx} | {r.get('year')} | {r.get('make')} | {r.get('model')} | {trim} "
+                    f"| {price} | {mileage} | {score} | {'Yes' if r.get('is_hybrid') else 'No'} |"
+                )
+
+        return "\n".join([header, sep] + rows)
+
     def build_prompt(self, listings: list[dict]) -> str:
         """
-        Build the analysis prompt per Section 5 of the architecture spec.
+        Build the per-make analysis prompt.
         Caps the listings table at 30 rows (top by value_score).
         """
         from datetime import datetime, timezone
 
-        run_ts       = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        # Use listings in the order they arrive (already sorted by model_preference
-        # then value_score in main.py) so the table IDs map 1:1 to email row numbers.
-        total_shown  = min(30, len(listings))
+        run_ts      = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        total_shown = min(30, len(listings))
         top_listings = listings[:total_shown]
 
         fuel_note = (
@@ -258,38 +302,9 @@ class LLMAnalyzer:
             f"Listings shown: {total_shown}"
         )
 
-        # Build markdown table — keep a mapping from row ID to VIN for top-pick parsing
-        self._last_id_to_vin: dict[int, str] = {}
-        if self._show_financing:
-            table_header = "| ID | Year | Make | Model | Trim | Price | Mileage | Est. Payment | Value Score | Hybrid |"
-            table_sep    = "|----|------|------|-------|------|-------|---------|--------------|-------------|--------|"
-        else:
-            table_header = "| ID | Year | Make | Model | Trim | Price | Mileage | Value Score | Hybrid |"
-            table_sep    = "|----|------|------|-------|------|-------|---------|-------------|--------|"
-        table_rows   = []
-        for idx, r in enumerate(top_listings, start=1):
-            self._last_id_to_vin[idx] = r.get("vin") or ""
-            trim    = (r.get("trim") or "")
-            if r.get("is_hybrid"):
-                trim = f"[HYBRID] {trim}"
-            price   = f"${round(r.get('price') or 0):,}"
-            mileage = f"{round((r.get('mileage') or 0) / 100) * 100:,}"
-            score   = int(r.get("value_score") or 0)
-            if self._show_financing:
-                payment = f"${r.get('monthly_carvana') or r.get('monthly_estimated') or 0:,.0f}/mo"
-                table_rows.append(
-                    f"| {idx} | {r.get('year')} | {r.get('make')} | {r.get('model')} | {trim} "
-                    f"| {price} | {mileage} | {payment} | {score} | {'Yes' if r.get('is_hybrid') else 'No'} |"
-                )
-            else:
-                table_rows.append(
-                    f"| {idx} | {r.get('year')} | {r.get('make')} | {r.get('model')} | {trim} "
-                    f"| {price} | {mileage} | {score} | {'Yes' if r.get('is_hybrid') else 'No'} |"
-                )
+        table = self._build_listings_table(listings)  # also sets _last_id_to_vin
 
-        table = "\n".join([table_header, table_sep] + table_rows)
-
-        # Top 5 highlight block (same order as table — IDs 1–5)
+        # Top 5 highlight block
         top5 = top_listings[:5]
         top5_lines = "\n".join(
             f"ID {i+1}. {r.get('year')} {r.get('make')} {r.get('model')} {r.get('trim','')} "
@@ -303,7 +318,9 @@ class LLMAnalyzer:
             "3. Flag any listings that appear to be unusual (suspiciously low price, very high mileage for year, etc.).\n"
             "4. Note any patterns across the full dataset (e.g., 'RAV4 Hybrids are commanding a $3,000 premium over gas models in this dataset').\n"
             "5. Give one clear final recommendation with a brief rationale.\n\n"
-            "Keep the response under 600 words. Use plain language. Avoid filler phrases.\n\n"
+            "Keep the response under 600 words. Use plain language. Avoid filler phrases.\n"
+            "In your written analysis, refer to listings by year, make, model, trim, and price "
+            "(e.g. '2024 Toyota RAV4 XLE at $31,500') — do not use ID numbers.\n\n"
             "At the very end of your response, on its own line, write exactly:\n"
             "TOP_PICKS: <comma-separated IDs of your top 3 recommended listings>\n"
             "Example: TOP_PICKS: 2,5,11\n"
@@ -316,4 +333,69 @@ class LLMAnalyzer:
             f"{table}\n\n"
             f"Top 5 by value score:\n{top5_lines}\n\n"
             f"[ANALYSIS REQUEST]\n{analysis_request}"
+        )
+
+    def build_synthesis_prompt(
+        self,
+        all_listings: list[dict],
+        per_make_analyses: list[tuple[str, str]],
+    ) -> str:
+        """
+        Build a cross-model synthesis prompt after all per-make analyses are done.
+
+        The returned prompt asks the LLM to compare across ALL makes and produce:
+          - Top 3 best deals across all models
+          - One final recommendation
+
+        Calling this also sets self._last_id_to_vin against `all_listings` so
+        that _parse_top_picks correctly maps IDs back to VINs.
+        """
+        budget_str = f"${self._max_price:,}" if self._max_price else "their stated budget"
+        fuel_note  = (
+            "particularly interested in hybrid trims"
+            if self._has_hybrid
+            else "open to all fuel types"
+        )
+        financing_note = (
+            f"Financing: ${self._down_payment:,} down, "
+            f"{config.INTEREST_RATE}% APR, {config.LOAN_TERM_MONTHS} months.\n"
+            if self._show_financing else ""
+        )
+
+        system_context = (
+            f"You are an automotive analyst. Multiple per-make analyses have been completed "
+            f"for a buyer in Phoenix, AZ. Budget: {budget_str}. Buyer is {fuel_note}. "
+            f"{financing_note}"
+            f"Your task is to synthesize the per-make findings into a single cross-model recommendation."
+        )
+
+        # Truncate each per-make analysis to keep the prompt size reasonable
+        summaries = "\n\n".join(
+            f"### {make}\n{analysis[:1200]}{'…' if len(analysis) > 1200 else ''}"
+            for make, analysis in per_make_analyses
+        )
+
+        # Full cross-model table — sets _last_id_to_vin as a side effect
+        table = self._build_listings_table(all_listings)
+
+        synthesis_request = (
+            "Based on the per-make analyses above and the full listing table below, provide:\n\n"
+            "1. **Top 3 best deals across ALL makes and models.** For each, state the vehicle "
+            "(year, make, model, trim, price), why it beats cross-model alternatives, and the "
+            "estimated monthly payment.\n"
+            "2. **One final recommendation** — a single specific vehicle — with a concise rationale "
+            "for why it is the best pick across the entire dataset.\n\n"
+            "Keep this section under 350 words. Refer to vehicles by year, make, model, trim, and "
+            "price — do not use ID numbers in the written text.\n\n"
+            "At the very end, on its own line, write exactly:\n"
+            "TOP_PICKS: <comma-separated IDs of your top 3 picks from the full listing table>\n"
+            "Example: TOP_PICKS: 3,11,22\n"
+            "Use the ID column from the full listing table. Do not add any text after this line."
+        )
+
+        return (
+            f"[SYSTEM CONTEXT]\n{system_context}\n\n"
+            f"[PER-MAKE ANALYSES]\n{summaries}\n\n"
+            f"[FULL LISTING TABLE — ALL MAKES]\n{table}\n\n"
+            f"[SYNTHESIS REQUEST]\n{synthesis_request}"
         )
