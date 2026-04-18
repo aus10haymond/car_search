@@ -230,12 +230,15 @@ class LLMAnalyzer:
             stripped = line.strip()
             if stripped.upper().startswith("TOP_PICKS:"):
                 raw_ids = stripped[len("TOP_PICKS:"):].strip()
+                log.debug("TOP_PICKS raw: %r", raw_ids)
                 for part in raw_ids.split(","):
                     try:
                         row_id = int(part.strip())
                         vin = id_to_vin.get(row_id, "")
                         if vin:
                             top_pick_vins.append(vin)
+                        else:
+                            log.warning("TOP_PICKS ID %d has no VIN mapping (table size=%d)", row_id, len(id_to_vin))
                     except ValueError:
                         pass
             else:
@@ -243,7 +246,7 @@ class LLMAnalyzer:
 
         cleaned = self._strip_id_refs("\n".join(kept_lines).rstrip())
         if top_pick_vins:
-            log.debug("LLM top picks (VINs): %s", top_pick_vins)
+            log.info("LLM top picks (VINs): %s", top_pick_vins)
         else:
             log.warning("LLM did not return a parseable TOP_PICKS line")
         return cleaned, top_pick_vins
@@ -408,15 +411,17 @@ class LLMAnalyzer:
             "Based on the per-make analyses above and the full listing table below, provide:\n\n"
             "1. **Top 3 best deals across ALL makes and models.** For each, state the vehicle "
             "(year, make, model, trim, price), why it beats cross-model alternatives, and the "
-            "estimated monthly payment.\n"
+            "estimated monthly payment. You may reference the ID column to keep track of which "
+            "listing you are discussing.\n"
             "2. **One final recommendation** — a single specific vehicle — with a concise rationale "
             "for why it is the best pick across the entire dataset.\n\n"
-            "Keep this section under 350 words. Refer to vehicles by year, make, model, trim, and "
-            "price — do not use ID numbers in the written text.\n\n"
-            "At the very end, on its own line, write exactly:\n"
+            "Keep this section under 400 words.\n\n"
+            "IMPORTANT: At the very end of your response, on its own line, write exactly:\n"
             "TOP_PICKS: <comma-separated IDs of your top 3 picks from the full listing table>\n"
             "Example: TOP_PICKS: 3,11,22\n"
-            "Use the ID column from the full listing table. Do not add any text after this line."
+            "The IDs must come from the ID column of the [FULL LISTING TABLE] above. "
+            "Look up each vehicle you named in the table and use its exact ID number. "
+            "Do not add any text after this line."
         )
 
         return (
