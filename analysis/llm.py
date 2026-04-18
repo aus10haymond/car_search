@@ -187,13 +187,39 @@ class LLMAnalyzer:
             error="No LLM backend available (network Ollama unreachable/no model loaded, Anthropic API not configured or disabled)",
         )
 
+    @staticmethod
+    def _strip_id_refs(text: str) -> str:
+        """
+        Remove LLM-generated ID references from analysis prose.
+
+        Handles patterns like:
+          — ID 2          (dash + ID)
+          (ID 1)          (parenthetical single)
+          (IDs 7 and 8)   (parenthetical list)
+          (IDs 19–23)     (parenthetical range)
+          ID 2 wins.      (bare reference)
+        """
+        import re
+        # "— ID N" or "– ID N" (with optional surrounding whitespace)
+        text = re.sub(r'\s*[—–]\s*ID\s+\d+', '', text)
+        # "(ID N)" or "(IDs N, M)" or "(IDs N–M)" or "(IDs N and M)"
+        text = re.sub(r'\s*\(IDs?\s+[\d,\s–—and]+\)', '', text)
+        # "ID N and ID M" compound references (before bare-ID pass to avoid orphaned "and")
+        text = re.sub(r'\bID\s+\d+(\s*(?:and|,)\s*ID\s+\d+)+\b', '', text)
+        # bare "ID N" remaining (word boundary)
+        text = re.sub(r'\bID\s+\d+\b', '', text)
+        # collapse any double-spaces left behind
+        text = re.sub(r' {2,}', ' ', text)
+        return text
+
     def _parse_top_picks(self, text: str) -> tuple[str, list[str]]:
         """
         Extract the TOP_PICKS line from the LLM response.
 
         Returns (cleaned_text, list_of_vins).
         The TOP_PICKS line is stripped from the returned text so it doesn't
-        appear in the email's analysis section.
+        appear in the email's analysis section.  Any residual "ID N" references
+        the LLM included in prose are also stripped.
         """
         id_to_vin = getattr(self, "_last_id_to_vin", {})
         lines = text.splitlines()
@@ -215,7 +241,7 @@ class LLMAnalyzer:
             else:
                 kept_lines.append(line)
 
-        cleaned = "\n".join(kept_lines).rstrip()
+        cleaned = self._strip_id_refs("\n".join(kept_lines).rstrip())
         if top_pick_vins:
             log.debug("LLM top picks (VINs): %s", top_pick_vins)
         else:
