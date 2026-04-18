@@ -216,31 +216,45 @@ def _build_html(
     run_time = datetime.now().strftime("%b %d, %Y %I:%M %p")
 
     # ── Build table listing set ───────────────────────────────────────────────
+    # LLM top picks always lead the table (in LLM rank order), then fill the
+    # remaining slots with non-pick listings sorted by score.
     if num_vehicles > 1:
-        # Top 5 per model, preserving the existing sort order (model preference,
-        # then value_score descending — applied in main.py before this point).
-        seen_counts: dict[tuple[str, str], int] = {}
-        table_listings: list[dict] = []
-        for r in listings:
-            key = (r.get("make") or "", r.get("model") or "")
-            count = seen_counts.get(key, 0)
-            if count < 5:
-                table_listings.append(r)
-                seen_counts[key] = count + 1
+        table_limit = 5   # per model cap for the fill section
         table_label = "Top 5 per Model"
     else:
-        table_listings = listings[:15]
+        table_limit = 15
         table_label = "Top 15 Listings"
 
-    # Ensure every VIN the LLM identified as a top pick appears in the table.
-    if llm_result.top_pick_vins:
-        table_vin_set = {r.get("vin") for r in table_listings if r.get("vin")}
-        missing = [v for v in llm_result.top_pick_vins if v and v not in table_vin_set]
-        if missing:
-            vin_to_listing = {r.get("vin"): r for r in listings if r.get("vin")}
-            for vin in missing:
-                if vin in vin_to_listing:
-                    table_listings.append(vin_to_listing[vin])
+    vin_to_listing: dict[str, dict] = {r.get("vin"): r for r in listings if r.get("vin")}
+
+    # 1. Seed the table with LLM picks (in rank order), skipping unknowns.
+    llm_pick_order: list[str] = [v for v in (llm_result.top_pick_vins or []) if v and v in vin_to_listing]
+    table_listings: list[dict] = [vin_to_listing[v] for v in llm_pick_order]
+    table_vin_set: set[str] = set(llm_pick_order)
+
+    # 2. Fill remaining slots with non-pick listings up to the per-model/total cap.
+    if num_vehicles > 1:
+        seen_counts: dict[tuple[str, str], int] = {}
+        # Pre-count LLM picks toward their model quotas so picks don't consume
+        # fill slots twice.
+        for r in table_listings:
+            key = (r.get("make") or "", r.get("model") or "")
+            seen_counts[key] = seen_counts.get(key, 0) + 1
+        for r in listings:
+            if (r.get("vin") or "") in table_vin_set:
+                continue
+            key = (r.get("make") or "", r.get("model") or "")
+            if seen_counts.get(key, 0) < table_limit:
+                table_listings.append(r)
+                table_vin_set.add(r.get("vin") or "")
+                seen_counts[key] = seen_counts.get(key, 0) + 1
+    else:
+        for r in listings:
+            if (r.get("vin") or "") not in table_vin_set:
+                table_listings.append(r)
+                table_vin_set.add(r.get("vin") or "")
+            if len(table_listings) >= table_limit:
+                break
 
     # ── Determine starred VINs ────────────────────────────────────────────────
     def _top_scored_vins(rows: list[dict], exclude: set[str], n: int) -> set[str]:
@@ -276,8 +290,7 @@ def _build_html(
     parts.append(
         "<p style='font-size:12px;color:#666;margin-top:0'>"
         "<b>★</b> = LLM top pick (top value score if no LLM analysis) &nbsp;|&nbsp;"
-        "<span style='background:#fffde7;padding:1px 5px;border:1px solid #f0e68c'>&nbsp;</span>"
-        " = price drop (▼ X% = tracked drop vs last run; ▼ Price Drop = Carvana badge) &nbsp;|&nbsp;"
+        "▼ = price drop (▼ X% = tracked drop vs last run; ▼ Price Drop = Carvana badge) &nbsp;|&nbsp;"
         "<span style='background:#27ae60;color:white;font-size:11px;padding:1px 5px;"
         "border-radius:3px'>NEW</span> = first time seen or marked Recent by Carvana"
         "</p>"
@@ -303,7 +316,7 @@ def _build_html(
         is_pick      = vin in starred_vins
         is_new       = vin in new_vins or bool(r.get("is_recent"))
 
-        row_bg   = "background:#fffde7" if is_drop else ""
+        row_bg   = ""
         position = f"<b>★ {i}</b>" if is_pick else str(i)
 
         if is_db_drop:
@@ -377,6 +390,11 @@ def _build_html(
             f"{config.LOAN_TERM_MONTHS}-month term.</p>"
         )
 
+    # ── Trim key ──────────────────────────────────────────────────────────────
+    trim_key_html = _build_trim_key_html(table_listings)
+    if trim_key_html:
+        parts.append(trim_key_html)
+
     # ── LLM analysis ─────────────────────────────────────────────────────────
     if llm_result.analysis:
         backend_label = llm_result.backend_used.replace("_", " ").title()
@@ -417,6 +435,129 @@ def _build_html(
         "</body></html>"
     )
 
+    return "\n".join(parts)
+
+
+# ── Trim key ─────────────────────────────────────────────────────────────────
+
+# Per-vehicle trim descriptions keyed by (make_lower, model_lower).
+# Each entry: (display_name, one-line description).
+_TRIM_KEY_DATA: dict[tuple[str, str], list[tuple[str, str]]] = {
+    ("honda", "cr-v"): [
+        ("LX",                  "Base trim — Honda Sensing, 7\" screen, push-button start"),
+        ("EX",                  "Best gas value — sunroof, heated seats, 9\" screen (2023+)"),
+        ("EX-L",                "Leather, wireless charging, power liftgate, 8-speaker audio"),
+        ("Touring",             "Top pre-2023 gas — navigation, 9-speaker audio, 19\" wheels"),
+        ("Hybrid EX",           "2021–22 hybrid entry — AWD standard, 212 hp, e:HEV system"),
+        ("Hybrid EX-L",         "2021–22 hybrid — leather, full LED headlights, AWD standard"),
+        ("Hybrid Touring",      "Top 2021–22 hybrid — wireless charging, hands-free liftgate"),
+        ("Sport Hybrid",        "Best 2023+ hybrid value — AWD standard, 204 hp ⭐"),
+        ("Sport-L Hybrid",      "2024+ premium hybrid — leather, 9\" screen, wireless charger"),
+        ("Sport Touring Hybrid","Top CR-V — Bose audio, head-up display, Honda navigation"),
+    ],
+    ("toyota", "rav4"): [
+        ("LE",                    "Base gas — Safety Sense 2.0, CarPlay, 7\" screen"),
+        ("XLE",                   "Best gas value — moonroof, blind-spot, alloy wheels ⭐"),
+        ("XLE Premium",           "Leatherette seats, larger screen, power liftgate"),
+        ("Adventure",             "AWD standard, 120V outlet, sport-tuned suspension"),
+        ("TRD Off-Road",          "AWD standard, all-terrain tires, off-road suspension"),
+        ("Limited",               "Top gas — JBL audio, ventilated seats, surround-view camera"),
+        ("Hybrid LE",             "Entry hybrid — AWD standard, 41/38 MPG, best EPA payback"),
+        ("Hybrid XLE",            "Best overall RAV4 — AWD standard, most recommended ⭐"),
+        ("Hybrid XLE Premium",    "Hybrid + leatherette, larger screen, heated seats"),
+        ("Hybrid SE",             "Sport-tuned suspension hybrid variant"),
+        ("Hybrid XSE",            "Sport + luxury hybrid combination"),
+        ("Hybrid Limited",        "Top hybrid — JBL audio, ventilated/heated seats, full cluster"),
+        ("Hybrid Woodland Edition","Adventure hybrid — all-terrain tires, bronze wheels (2023+)"),
+    ],
+    ("kia", "sportage"): [
+        ("LX (2021–22)",          "4th gen — older platform, significantly inferior to 2023+ ⚠"),
+        ("EX (2021–22)",          "4th gen mid-level — still older platform ⚠"),
+        ("SX Turbo (2021–22)",    "4th gen top trim — 1.6T, 175 hp ⚠"),
+        ("LX",                    "5th gen base — 8\" screen, 12.2\" cluster, ADAS, LED headlights"),
+        ("EX",                    "Best 5th gen gas value — 12.3\" screen, wireless charging ⭐"),
+        ("X-Line AWD",            "AWD standard, locking differential, off-road modes"),
+        ("SX",                    "Panoramic sunroof, Harman Kardon audio — FWD only"),
+        ("SX Prestige",           "SX + enhanced safety tech — FWD only"),
+        ("X-Pro",                 "Best off-road — AWD, all-terrain tires, hill descent"),
+        ("X-Pro Prestige",        "X-Pro + heated windshield, blind-spot view monitor"),
+        ("Hybrid LX",             "Entry hybrid — 42/44 MPG FWD, excellent efficiency"),
+        ("Hybrid EX",             "Best hybrid value — 12.3\" screen, wireless charging ⭐"),
+        ("Hybrid X-Line AWD",     "Hybrid + AWD standard, off-road styling"),
+        ("Hybrid SX Prestige",    "Top hybrid — panoramic sunroof, Harman Kardon, AWD standard"),
+    ],
+    ("subaru", "forester"): [
+        ("Base",            "AWD standard — EyeSight ADAS; skip for Premium"),
+        ("Premium",         "Best gas value — panoramic sunroof, heated seats, X-Mode ⭐"),
+        ("Sport",           "Dual X-Mode (Snow/Dirt + Deep Snow/Mud), sport styling"),
+        ("Limited",         "Leather seats, 8\" screen, dual-zone climate, power liftgate"),
+        ("Touring",         "Top gas — Harman Kardon audio, navigation, heated rear seats"),
+        ("Wilderness",      "Best off-road — 9.2\" clearance, all-terrain tires (2022+)"),
+        ("Premium Hybrid",  "Best 2025 hybrid value — panoramic moonroof, wireless CarPlay ⭐"),
+        ("Sport Hybrid",    "2025 — Harman Kardon 11-speaker, 19\" bronze wheels"),
+        ("Limited Hybrid",  "2025 — heated steering wheel, 8-way power passenger seat"),
+        ("Touring Hybrid",  "Top 2025 trim — 360° camera, ventilated seats, leather"),
+    ],
+    ("toyota", "grand highlander"): [
+        ("Hybrid LE",          "2025 only entry trim — AWD standard, 12.3\" screen, 245 hp"),
+        ("Hybrid XLE",         "Best value — moonroof, heated seats, wireless charging (FWD or AWD) ⭐"),
+        ("Hybrid Limited",     "AWD standard — leather, ventilated seats, 360° surround camera"),
+        ("Hybrid Nightshade",  "2025 only — Limited features + blacked-out exterior accents"),
+        ("Hybrid MAX",         "⚠ OUT OF SCOPE — turbocharged 362 hp, worse MPG (26–27 combined)"),
+    ],
+}
+
+
+def _build_trim_key_html(listings: list[dict]) -> str:
+    """
+    Build a compact trim-level key for every make/model present in `listings`.
+    Returns an empty string if no matching data is found.
+    """
+    # Collect unique (make, model) pairs that appear in the listings.
+    # Preserve original casing for display by tracking the first seen raw values.
+    seen: list[tuple[str, str]] = []          # (make_lower, model_lower)
+    seen_set: set[tuple[str, str]] = set()
+    display_labels: dict[tuple[str, str], tuple[str, str]] = {}  # key → (make, model) display
+    for r in listings:
+        make_raw  = (r.get("make") or "").strip()
+        model_raw = (r.get("model") or "").strip()
+        key = (make_raw.lower(), model_raw.lower())
+        if key not in seen_set and key in _TRIM_KEY_DATA:
+            seen.append(key)
+            seen_set.add(key)
+            display_labels[key] = (make_raw, model_raw)
+
+    if not seen:
+        return ""
+
+    parts = [
+        "<div style='margin-top:24px'>",
+        "<h3 style='margin-bottom:6px'>Trim Level Key</h3>",
+        "<p style='font-size:12px;color:#666;margin-top:0;margin-bottom:10px'>"
+        "Available trims for each vehicle in this search. ⭐ = recommended value trim. "
+        "⚠ = flagged / out of scope.</p>",
+    ]
+
+    for make_key, model_key in seen:
+        trims = _TRIM_KEY_DATA[(make_key, model_key)]
+        make_display, model_display = display_labels[(make_key, model_key)]
+        parts.append(
+            f"<div style='margin-bottom:14px'>"
+            f"<b style='font-size:13px'>{make_display} {model_display}</b>"
+            f"<table style='font-size:12px;border-collapse:collapse;margin-top:4px;width:100%'>"
+        )
+        for trim_name, description in trims:
+            row_style = "color:#c0392b" if "⚠" in trim_name or "⚠" in description else "color:#333"
+            parts.append(
+                f"<tr>"
+                f"<td style='padding:2px 10px 2px 0;white-space:nowrap;font-weight:600;"
+                f"{row_style};vertical-align:top;width:200px'>{trim_name}</td>"
+                f"<td style='padding:2px 0;color:#555'>{description}</td>"
+                f"</tr>"
+            )
+        parts.append("</table></div>")
+
+    parts.append("</div>")
     return "\n".join(parts)
 
 
