@@ -121,17 +121,19 @@ def test_new_listing_vin_mismatch_no_badge():
 
 # ── HTML output: price drop row highlight ────────────────────────────────────
 
-def test_price_drop_row_yellow_background():
+def test_price_drop_row_has_drop_indicator():
+    """Price-drop rows show the ▼ percentage indicator (row background was removed)."""
     listing = _listing(vin="DROP001", price=27000.0)
     price_drops = [{**listing, "prev_price": 30000.0, "drop_pct": 10.0}]
     html = _build_html([listing], _no_llm(), price_drops, {})
-    assert "<tr style='background:#fffde7'>" in html
+    assert "10.0% drop" in html
+    # Row-level yellow background is intentionally absent
+    assert "<tr style='background:#fffde7'>" not in html
 
 
 def test_normal_row_no_yellow_background():
     listing = _listing(vin="PLAIN001")
     html = _build_html([listing], _no_llm(), [], {})
-    # The legend contains background:#fffde7 as a swatch — check no <tr> gets it
     assert "<tr style='background:#fffde7'>" not in html
 
 
@@ -154,14 +156,16 @@ def test_price_drop_footnote_absent_when_no_drops():
     assert "Price drops are relative" not in html
 
 
-def test_drop_only_highlights_matching_vin():
-    """Drop for VIN A should not highlight a row for VIN B."""
+def test_drop_only_shows_indicator_for_matching_vin():
+    """Drop indicator appears only for the dropped VIN's row, not unrelated rows."""
     listing_a = _listing(vin="A001", price=27000.0)
     listing_b = _listing(vin="B001", price=30000.0)
     price_drops = [{**listing_a, "prev_price": 30000.0, "drop_pct": 10.0}]
     html = _build_html([listing_a, listing_b], _no_llm(), price_drops, {})
-    # Exactly one <tr> should get the yellow background (A001's row only)
-    assert html.count("<tr style='background:#fffde7'>") == 1
+    # Drop indicator text appears exactly once (A001's row)
+    assert html.count("10.0% drop") == 1
+    # No yellow row backgrounds anywhere
+    assert "<tr style='background:#fffde7'>" not in html
 
 
 def test_new_and_drop_coexist_on_same_row():
@@ -169,7 +173,8 @@ def test_new_and_drop_coexist_on_same_row():
     listing = _listing(vin=vin, price=27000.0)
     price_drops = [{**listing, "prev_price": 30000.0, "drop_pct": 10.0}]
     html = _build_html([listing], _no_llm(), price_drops, {}, new_vins={vin})
-    assert "<tr style='background:#fffde7'>" in html
+    # Drop indicator and NEW badge both appear
+    assert "10.0% drop" in html
     assert html.count(">NEW</span>") == 2
 
 
@@ -191,31 +196,26 @@ def _count_stars(html: str) -> int:
 
 
 def test_stars_all_three_llm_picks_in_top10():
-    """When all 3 LLM picks appear in the top 10, exactly those 3 rows are starred."""
+    """LLM picks are moved to the top of the table and starred at rows 1, 2, 3."""
     listings = [_listing(vin=f"V{i:03d}", value_score=100 - i) for i in range(10)]
     llm = _llm_with_picks("V000", "V003", "V007")
     html = _build_html(listings, llm, [], {})
     assert _count_stars(html) == 3
-    # Verify the starred rows are the LLM picks, not the top scorers
-    # V000 (highest score) is starred
-    assert "<b>★ 1</b>" in html
-    # V003 is row 4, V007 is row 8
-    assert "<b>★ 4</b>" in html
-    assert "<b>★ 8</b>" in html
+    # Picks are pinned to positions 1, 2, 3 in LLM rank order
+    assert "<b>★ 1</b>" in html  # V000
+    assert "<b>★ 2</b>" in html  # V003 (moved up from original score-order position 4)
+    assert "<b>★ 3</b>" in html  # V007 (moved up from original score-order position 8)
 
 
-def test_stars_partial_llm_overlap_supplements_with_score():
-    """When only 1 LLM pick is in the top 10, the remaining 2 stars come from top score."""
-    # 10 listings with distinct VINs; only V002 is in the LLM picks
+def test_stars_partial_llm_overlap_only_stars_present_picks():
+    """When some LLM picks don't exist in listings, only present picks are starred."""
     listings = [_listing(vin=f"V{i:03d}", value_score=float(100 - i)) for i in range(10)]
     llm = _llm_with_picks("V002", "OUTSIDE_A", "OUTSIDE_B")
     html = _build_html(listings, llm, [], {})
-    assert _count_stars(html) == 3
-    # V002 (LLM pick, row 3) must be starred
-    assert "<b>★ 3</b>" in html
-    # V000 and V001 are the top-scored remaining rows — they fill the other 2 slots
+    # Only V002 is in the listings; OUTSIDE_A/B are not → 1 star
+    assert _count_stars(html) == 1
+    # V002 is pinned to row 1 as the only present LLM pick
     assert "<b>★ 1</b>" in html
-    assert "<b>★ 2</b>" in html
 
 
 def test_stars_no_llm_overlap_uses_top_score():

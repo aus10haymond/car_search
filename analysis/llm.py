@@ -52,7 +52,7 @@ class LLMAnalyzer:
         self._show_financing  = show_financing
         self._down_payment    = down_payment if down_payment is not None else config.DOWN_PAYMENT
 
-    def analyze(self, listings: list[dict]) -> LLMResult:
+    def analyze(self, listings: list[dict], reference_doc: str | None = None) -> LLMResult:
         """
         1. If OLLAMA_ENABLED and network Ollama has a model loaded:
                try ollama.analyze(prompt, model=loaded_model)
@@ -70,7 +70,11 @@ class LLMAnalyzer:
                return LLMResult with backend_used="none", analysis=None
 
         Never raises. Always returns an LLMResult.
+
+        reference_doc: optional override for this call only; falls back to
+        the doc set at __init__ time if not provided.
         """
+        effective_ref = reference_doc if reference_doc is not None else self._reference_doc
         prompt = self.build_prompt(listings)
 
         # ── Step 1: Network Ollama (primary) ──────────────────────────────────
@@ -92,7 +96,7 @@ class LLMAnalyzer:
             if loaded_model:
                 t0 = time.monotonic()
                 try:
-                    ollama_ref = self._reference_doc
+                    ollama_ref = effective_ref
                     max_chars  = config.OLLAMA_REF_DOC_MAX_CHARS
                     if max_chars and ollama_ref and len(ollama_ref) > max_chars:
                         log.warning(
@@ -135,7 +139,7 @@ class LLMAnalyzer:
                 t0 = time.monotonic()
                 try:
                     text, cache_hit = self.anthropic.analyze(
-                        prompt, reference_doc=self._reference_doc
+                        prompt, reference_doc=effective_ref
                     )
                     latency = int((time.monotonic() - t0) * 1000)
                     log.info(

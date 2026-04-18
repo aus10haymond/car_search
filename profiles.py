@@ -239,3 +239,48 @@ def resolve_reference_doc(profile: "SearchProfile") -> str:
         profile.profile_id,
     )
     return ""
+
+
+def resolve_reference_doc_for_make(profile: "SearchProfile", make: str) -> str:
+    """
+    Return the reference doc content for all vehicles matching `make` in the
+    profile. Used by the per-make LLM analysis to avoid feeding reference docs
+    for other brands into a single-make prompt.
+
+    If a profile-level reference_doc_path is set, the full doc is returned as-is
+    (it may already be scoped to one make). Otherwise, auto-discovers only the
+    per-vehicle docs whose make matches the requested make.
+
+    Falls back to resolve_reference_doc(profile) if no per-make docs are found.
+    """
+    # Profile-level path takes precedence — can't split it by make
+    if profile.reference_doc_path:
+        return resolve_reference_doc(profile)
+
+    ref_dir = Path(config.VEHICLE_REFERENCE_DIR)
+    if not ref_dir.is_dir():
+        return resolve_reference_doc(profile)
+
+    sections: list[str] = []
+    for p_make, p_model in profile.vehicles:
+        if p_make.lower() != make.lower():
+            continue
+        doc_path = _find_vehicle_doc(p_make, p_model, ref_dir)
+        if doc_path:
+            text = doc_path.read_text(encoding="utf-8").strip()
+            if text:
+                log.info(
+                    "[%s] Per-make ref doc for %s %s: %s (%d chars)",
+                    profile.profile_id, p_make, p_model, doc_path.name, len(text),
+                )
+                sections.append(text)
+
+    if sections:
+        return "\n\n---\n\n".join(sections)
+
+    # No per-make docs found — fall back to the global resolver
+    log.debug(
+        "[%s] No per-make doc found for '%s' — falling back to full reference doc",
+        profile.profile_id, make,
+    )
+    return resolve_reference_doc(profile)

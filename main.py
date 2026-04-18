@@ -28,7 +28,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 import config
-from profiles import SearchProfile, load_profiles, resolve_reference_doc
+from profiles import SearchProfile, load_profiles, resolve_reference_doc, resolve_reference_doc_for_make
 from utils.logging_config import setup_logging, start_run_log, end_run_log
 from scraper.urls import build_search_url
 from scraper.browser import Browser
@@ -38,7 +38,8 @@ from analysis.llm import LLMAnalyzer, LLMResult
 from storage.csv_writer import write_results
 from storage import history_db
 from storage.trends import build_trend_charts_html
-from notifications.email_alert import send_summary, should_send
+from notifications.email_alert import build_email_html, send_summary, should_send
+from analysis.validator import validate_llm_result, validate_email_html, build_warning_banner
 
 log = logging.getLogger(__name__)
 
@@ -138,18 +139,51 @@ def _run_profile(
         ))
         _log_enrichment_summary(enriched)
 
-        # ── Phase 5: LLM analysis ─────────────────────────────────────────────
+        # ── Phase 5: LLM analysis (per-make, isolated reference docs) ────────
         log.info("--- PHASE 5: LLM ANALYSIS ---")
-        reference_doc = resolve_reference_doc(profile)
         llm_result = _run_llm(
-            enriched, skip_llm, force_backend,
-            reference_doc=reference_doc,
+            profile, enriched, skip_llm, force_backend,
             max_price=profile.max_price,
             has_hybrid_interest=has_hybrid_interest,
             show_financing=profile.show_financing,
             down_payment=profile.down_payment,
         )
         _log_llm_summary(llm_result)
+
+        # ── Phase 5.5: Validate LLM output ───────────────────────────────────
+        log.info("--- PHASE 5.5: VALIDATION ---")
+        if llm_result.analysis and not skip_llm:
+            from analysis.anthropic_client import AnthropicClient
+            _validator_client = AnthropicClient(
+                api_key=config.ANTHROPIC_API_KEY,
+                model=config.ANTHROPIC_MODEL,
+                max_tokens=2000,
+            )
+            _makes = list({make for make, _ in profile.vehicles})
+            _llm_validation = validate_llm_result(
+                llm_result.analysis, _makes, _validator_client,
+            )
+            if not _llm_validation.passed:
+                log.warning(
+                    "LLM analysis failed validation — %d issue(s)",
+                    len(_llm_validation.issues),
+                )
+                if _llm_validation.corrected_text:
+                    log.info("Replacing analysis with auto-corrected version")
+                    llm_result = LLMResult(
+                        analysis=_llm_validation.corrected_text,
+                        backend_used=llm_result.backend_used,
+                        model_used=llm_result.model_used,
+                        tokens_used=llm_result.tokens_used,
+                        latency_ms=llm_result.latency_ms,
+                        error=llm_result.error,
+                        cache_hit=llm_result.cache_hit,
+                        top_pick_vins=llm_result.top_pick_vins,
+                    )
+                else:
+                    log.warning("Auto-correction unavailable — proceeding with original analysis")
+        else:
+            log.debug("Validation skipped (no analysis or LLM disabled)")
 
         if dry_run:
             _print_summary(enriched)
@@ -198,6 +232,31 @@ def _run_profile(
             log.info("Email skipped (--no-email)")
         elif force_email or (config.SEND_EMAIL and should_send(enriched, new_vins, price_drops,
                                                                max_price=profile.max_price)):
+            # Build HTML up front so we can validate it before sending
+            email_html = build_email_html(
+                enriched, llm_result, price_drops,
+                trends=trends, new_vins=new_vins,
+                profile_label=profile.label,
+                show_financing=profile.show_financing,
+                down_payment=profile.down_payment,
+                num_vehicles=len(profile.vehicles),
+            )
+            _makes = list({make for make, _ in profile.vehicles})
+            _html_validation = validate_email_html(email_html, _makes)
+            if not _html_validation.passed:
+                log.warning(
+                    "Email HTML validation: %d issue(s) — injecting warning banner",
+                    len(_html_validation.issues),
+                )
+                banner = build_warning_banner(_html_validation.issues)
+                # Inject banner after the opening <h2> header
+                insert_at = email_html.find("<h2 ")
+                if insert_at != -1:
+                    insert_at = email_html.find(">", insert_at) + 1
+                    email_html = email_html[:insert_at] + "\n" + banner + email_html[insert_at:]
+                else:
+                    email_html = banner + email_html
+
             sent = send_summary(
                 enriched, llm_result, price_drops,
                 trends=trends, csv_path=csv_path, force=force_email,
@@ -207,6 +266,7 @@ def _run_profile(
                 show_financing=profile.show_financing,
                 down_payment=profile.down_payment,
                 num_vehicles=len(profile.vehicles),
+                pre_built_html=email_html,
             )
             log.info("Email dispatch: %s", "sent" if sent else "failed")
         else:
@@ -340,15 +400,20 @@ def _warm_up_ollama() -> None:
 
 
 def _run_llm(
+    profile: SearchProfile,
     listings: list[dict],
     skip_llm: bool,
     force_backend: str | None,
-    reference_doc: str = "",
     max_price: int = 0,
     has_hybrid_interest: bool = False,
     show_financing: bool = True,
     down_payment: int | None = None,
 ) -> LLMResult:
+    """
+    Run LLM analysis with isolated per-make reference docs to prevent brand
+    terminology bleed between makes.  One LLM call is made per distinct make
+    in `listings`; results are merged into a single LLMResult.
+    """
     if skip_llm:
         log.info("LLM analysis skipped (--no-llm)")
         return LLMResult(analysis=None, backend_used="none", model_used="",
@@ -364,21 +429,91 @@ def _run_llm(
         log.info("Backend forced to Anthropic API only")
 
     try:
+        # One shared analyzer — Ollama/Anthropic clients are reused across makes
         analyzer = LLMAnalyzer(
-            reference_doc=reference_doc,
             max_price=max_price,
             has_hybrid_interest=has_hybrid_interest,
             show_financing=show_financing,
             down_payment=down_payment,
         )
-        prompt = analyzer.build_prompt(listings)
-        log.debug("LLM prompt length: %d characters, ~%d tokens", len(prompt), len(prompt) // 4)
-        result = analyzer.analyze(listings)
+
+        # Preserve the existing sort order while collecting distinct makes
+        makes: list[str] = list(dict.fromkeys(
+            r.get("make", "") for r in listings if r.get("make")
+        ))
+
+        per_make_results: list[tuple[str, LLMResult]] = []
+        for make in makes:
+            make_listings = [r for r in listings if r.get("make", "").lower() == make.lower()]
+            ref_doc = resolve_reference_doc_for_make(profile, make)
+            log.info(
+                "LLM analysis — %s: %d listings, %d-char ref doc",
+                make, len(make_listings), len(ref_doc),
+            )
+            log.debug("Prompt size for %s: ~%d tokens", make, len(analyzer.build_prompt(make_listings)) // 4)
+            result = analyzer.analyze(make_listings, reference_doc=ref_doc)
+            per_make_results.append((make, result))
+
+        return _merge_llm_results(per_make_results)
     finally:
         config.OLLAMA_ENABLED    = original_ollama
         config.ANTHROPIC_ENABLED = original_anthropic
 
-    return result
+
+def _merge_llm_results(per_make_results: list[tuple[str, LLMResult]]) -> LLMResult:
+    """
+    Combine per-make LLMResults into one.
+
+    - Single make: return its result unchanged (no section headers added).
+    - Multiple makes: prefix each analysis block with a ### Make header and
+      concatenate.  top_pick_vins is the ordered union of all makes' picks.
+    """
+    if not per_make_results:
+        return LLMResult(
+            analysis=None, backend_used="none", model_used="",
+            tokens_used=None, latency_ms=0, error="no makes in results",
+        )
+
+    if len(per_make_results) == 1:
+        return per_make_results[0][1]
+
+    analysis_sections: list[str] = []
+    all_vins: list[str] = []
+    total_latency = 0
+    total_tokens = 0
+    last_backend = "none"
+    last_model = ""
+    any_cache_hit: bool | None = None
+    errors: list[str] = []
+
+    for make, result in per_make_results:
+        if result.analysis:
+            analysis_sections.append(f"### {make}\n\n{result.analysis}")
+        if result.top_pick_vins:
+            all_vins.extend(result.top_pick_vins)
+        total_latency += result.latency_ms
+        if result.tokens_used:
+            total_tokens += result.tokens_used
+        if result.backend_used != "none":
+            last_backend = result.backend_used
+            last_model   = result.model_used
+        if result.cache_hit is True:
+            any_cache_hit = True
+        elif result.cache_hit is False and any_cache_hit is None:
+            any_cache_hit = False
+        if result.error:
+            errors.append(f"{make}: {result.error}")
+
+    return LLMResult(
+        analysis="\n\n".join(analysis_sections) if analysis_sections else None,
+        backend_used=last_backend,
+        model_used=last_model,
+        tokens_used=total_tokens or None,
+        latency_ms=total_latency,
+        error="; ".join(errors) if errors else None,
+        cache_hit=any_cache_hit,
+        top_pick_vins=all_vins,
+    )
 
 
 # ── Alert flag helper ─────────────────────────────────────────────────────────

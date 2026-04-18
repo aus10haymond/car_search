@@ -78,6 +78,25 @@ def should_send(
     return False
 
 
+def build_email_html(
+    listings: list[dict],
+    llm_result: LLMResult,
+    price_drops: list[dict],
+    trends: dict | None = None,
+    new_vins: set[str] | None = None,
+    profile_label: str = "Carvana Tracker",
+    show_financing: bool = True,
+    down_payment: int | None = None,
+    num_vehicles: int = 1,
+) -> str:
+    """Public wrapper around _build_html for use by external callers."""
+    return _build_html(
+        listings, llm_result, price_drops, trends or {}, new_vins or set(),
+        profile_label, show_financing=show_financing, down_payment=down_payment,
+        num_vehicles=num_vehicles,
+    )
+
+
 def send_summary(
     listings: list[dict],
     llm_result: LLMResult,
@@ -91,6 +110,7 @@ def send_summary(
     show_financing: bool = True,
     down_payment: int | None = None,
     num_vehicles: int = 1,
+    pre_built_html: str | None = None,
 ) -> bool:
     """
     Send an HTML email summary via Gmail API with the CSV attached.
@@ -98,6 +118,8 @@ def send_summary(
     Returns True on success, False on failure or if conditions not met.
     Only sends when SEND_EMAIL=True (or force=True).
     email_to specifies the recipients for this profile's email.
+    pre_built_html: if provided, skips the internal HTML build step and uses
+    this string directly (allows callers to validate/modify the HTML first).
     """
     if not config.SEND_EMAIL and not force:
         log.debug("Email skipped (SEND_EMAIL=False)")
@@ -117,9 +139,11 @@ def send_summary(
         return False
 
     subject = _build_subject(listings, price_drops, profile_label)
-    html    = _build_html(listings, llm_result, price_drops, trends or {}, new_vins or set(),
-                          profile_label, show_financing=show_financing, down_payment=down_payment,
-                          num_vehicles=num_vehicles)
+    html = pre_built_html if pre_built_html is not None else _build_html(
+        listings, llm_result, price_drops, trends or {}, new_vins or set(),
+        profile_label, show_financing=show_financing, down_payment=down_payment,
+        num_vehicles=num_vehicles,
+    )
 
     from_addr = (
         f"{config.EMAIL_FROM_NAME} <{config.GMAIL_SENDER}>"
@@ -272,6 +296,9 @@ def _build_html(
         starred_vins: set[str] = {
             r.get("vin") for r in table_listings if r.get("vin") in llm_pick_set
         }
+        if not starred_vins:
+            # LLM provided picks but none exist in the table — fall back to score
+            starred_vins = _top_scored_vins(table_listings, exclude=set(), n=3)
     else:
         # No LLM picks — fall back to top 3 by value score
         starred_vins = _top_scored_vins(table_listings, exclude=set(), n=3)
