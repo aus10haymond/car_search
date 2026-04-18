@@ -523,9 +523,13 @@ def _merge_llm_results(per_make_results: list[tuple[str, LLMResult]]) -> LLMResu
             if result.top_pick_vins:
                 per_make_vins.extend(result.top_pick_vins)
 
-    # Append synthesis section with a clean header (no "### _synthesis")
+    # For multi-make searches, only show the synthesis section in the email —
+    # per-make sections are used internally but not surfaced to the reader.
     if synthesis_result and synthesis_result.analysis:
-        analysis_sections.append(f"---\n\n## Overall Recommendation\n\n{synthesis_result.analysis}")
+        final_analysis = synthesis_result.analysis
+    else:
+        # Synthesis failed or wasn't run; fall back to concatenated per-make sections
+        final_analysis = "\n\n".join(analysis_sections) if analysis_sections else None
 
     # Synthesis picks are cross-model winners; use them first if available
     if synthesis_result and synthesis_result.top_pick_vins:
@@ -534,7 +538,7 @@ def _merge_llm_results(per_make_results: list[tuple[str, LLMResult]]) -> LLMResu
         final_vins = per_make_vins
 
     return LLMResult(
-        analysis="\n\n".join(analysis_sections) if analysis_sections else None,
+        analysis=final_analysis,
         backend_used=last_backend,
         model_used=last_model,
         tokens_used=total_tokens or None,
