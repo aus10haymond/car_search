@@ -131,12 +131,14 @@ See the [profiles.yaml reference](#profilesyaml-reference) below for all options
 The tracker sends email through the Gmail API with OAuth2. You need a Google Cloud project.
 
 **Step 1 — Create OAuth credentials:**
+
 1. Go to [console.cloud.google.com](https://console.cloud.google.com) → select or create a project
 2. **APIs & Services → Enable APIs → search "Gmail API" → Enable**
 3. **APIs & Services → Credentials → Create Credentials → OAuth client ID → Desktop app**
 4. Copy the **Client ID** and **Client Secret** into your `.env`
 
 **Step 2 — Authorize the app:**
+
 ```bash
 pip install google-auth-oauthlib   # one-time dependency for the setup script
 python setup_gmail_oauth.py        # opens a browser, writes GMAIL_REFRESH_TOKEN to .env
@@ -298,6 +300,7 @@ The backend used for each run is shown in the terminal output, the email footer,
 Per-vehicle reference docs in `vehicle_reference/` are automatically matched to each make/model by filename similarity. A doc for "Honda CR-V" would match `honda_crv.md`, `crv_reference.md`, etc.
 
 Each reference doc can contain:
+
 - Trim hierarchy and what each trim includes
 - Known issues at specific mileage/year ranges
 - Hybrid vs. gas trade-offs
@@ -337,7 +340,7 @@ Each email includes:
 
 ## Scheduling with Windows Task Scheduler
 
-The project includes `run_tracker.bat` in the root. To run it automatically every day:
+The project includes `example_run_tracker.bat` in the root to create your own Windows automation. To run it automatically every day:
 
 1. Open **Task Scheduler** → **Create Basic Task**
 2. Set the trigger to **Daily** at your preferred time
