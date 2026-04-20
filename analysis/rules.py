@@ -182,16 +182,18 @@ def _value_score(
     """
     Produce a 0–100 score. Higher is better.
 
-    Components (base weights sum to 90, plus optional bonuses):
+    Components (base weights sum to 100, plus optional bonuses):
       35 — price vs group average (same make/model/year)
       25 — mileage (inverse linear, 0→25pts, max_mileage→0pts)
       20 — age (newer = better, max_year→20pts, min_year→0pts)
+      10 — shipping (free/unknown→10pts, $1,500+→0pts, linear)
       10 — hybrid bonus (only when hybrid_bonus=True)
        6 — model preference bonus (auto-spread across model_preference order)
     """
-    price   = listing.get("price") or 0.0
-    mileage = listing.get("mileage")
-    year    = listing.get("year")
+    price    = listing.get("price") or 0.0
+    mileage  = listing.get("mileage")
+    year     = listing.get("year")
+    shipping = listing.get("shipping")
 
     # ── Price component (35 pts) ──────────────────────────────────────────────
     group_key = (listing.get("make"), listing.get("model"), year)
@@ -217,13 +219,20 @@ def _value_score(
         clamped = max(min_year, min(current_year, year))
         age_score = ((clamped - min_year) / year_range) * 20
 
+    # ── Shipping component (10 pts) — free/unknown = full; $1,500+ = 0 ────────
+    _MAX_SHIP = 1500.0
+    if shipping is None:
+        shipping_score = 10.0   # unknown → assume free / not penalized
+    else:
+        shipping_score = max(0.0, 10.0 * (1 - shipping / _MAX_SHIP))
+
     # ── Hybrid bonus (10 pts, optional) ──────────────────────────────────────
     hybrid_score = (10.0 if listing.get("is_hybrid") else 0.0) if hybrid_bonus else 0.0
 
     # ── Model preference bonus (up to 6 pts, auto-spread by rank) ────────────
     model_score = _model_preference_bonus(listing.get("model") or "", model_preference or [])
 
-    total = price_score + mileage_score + age_score + hybrid_score + model_score
+    total = price_score + mileage_score + age_score + shipping_score + hybrid_score + model_score
     return round(min(100.0, max(0.0, total)), 2)
 
 

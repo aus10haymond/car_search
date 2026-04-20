@@ -329,6 +329,7 @@ def normalize_vehicle(raw: dict, make: str, model: str, strategy: str) -> dict |
             "price":                  price,
             "mileage":                mileage,
             "monthly_carvana":        monthly,
+            "shipping":               None,  # backfilled by DOM pass in extract_listings
             "color_exterior":         str(color_ext).strip(),
             "url":                    url,
             "purchase_in_progress":   purchase_in_progress,
@@ -449,6 +450,69 @@ def _extract_status_slugs(html: str) -> tuple[set[str], set[str], set[str]]:
     return pip_slugs, recent_slugs, price_drop_slugs
 
 
+def _extract_shipping_from_dom(html: str) -> dict[str, float]:
+    """
+    Scrape Carvana's rendered shipping cost from the search results page.
+
+    Free shipping renders as text like "Free shipping" or "$0 shipping".
+    A paid fee renders as "$X,XXX shipping" or "X,XXX delivery fee".
+
+    Returns a dict of vehicle URL slug → shipping cost in dollars (0.0 = free).
+    Slugs not present in the result had no detectable shipping info.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    result: dict[str, float] = {}
+
+    _FREE_RE = re.compile(r"free\s*(shipping|delivery)", re.IGNORECASE)
+    _COST_RE = re.compile(r"\$?\s*([\d,]+)\s*(?:shipping|delivery)", re.IGNORECASE)
+
+    def _slug_from_node(node) -> str | None:
+        for _ in range(12):
+            if node is None:
+                return None
+            link = node.find("a", href=lambda h: h and "/vehicle/" in h)
+            if link:
+                return str(link["href"]).rstrip("/").split("/")[-1].split("?")[0] or None
+            node = node.parent
+        return None
+
+    def _record(slug: str | None, text: str) -> bool:
+        if not slug or slug in result:
+            return False
+        if _FREE_RE.search(text) or text.strip().lower() in ("free", "$0"):
+            result[slug] = 0.0
+            return True
+        m = _COST_RE.search(text)
+        if m:
+            try:
+                result[slug] = float(m.group(1).replace(",", ""))
+                return True
+            except ValueError:
+                pass
+        return False
+
+    # Primary: known testid selectors
+    for selector in (
+        '[data-testid="shipping-fee"]',
+        '[data-testid="delivery-fee"]',
+        '[data-testid="shipping"]',
+        '[data-testid*="shipping"]',
+        '[data-testid*="delivery"]',
+    ):
+        for el in soup.select(selector):
+            _record(_slug_from_node(el.parent), el.get_text(strip=True))
+    if result:
+        log.debug("DOM shipping map (testid): %d entries", len(result))
+        return result
+
+    # Fallback: text-node scan for shipping/delivery mentions
+    for node in soup.find_all(string=lambda t: t and re.search(r"shipping|delivery", t, re.IGNORECASE)):
+        _record(_slug_from_node(node.parent), node.strip())
+
+    log.debug("DOM shipping map: %d slug→value entries", len(result))
+    return result
+
+
 def _extract_monthly_from_dom(html: str) -> dict[str, float]:
     """
     Scrape Carvana's rendered monthly payment values from the search results page.
@@ -542,6 +606,20 @@ def extract_listings(html: str, make: str, model: str) -> list[dict]:
                 log.info("Backfilled monthly_carvana for %d/%d listings from DOM", filled, len(listings))
             else:
                 log.debug("DOM monthly map built but no slugs matched listing URLs")
+
+    # Backfill shipping cost from the rendered DOM
+    shipping_map = _extract_shipping_from_dom(html)
+    if shipping_map:
+        filled = 0
+        for listing in listings:
+            slug = (listing.get("url") or "").rstrip("/").split("/")[-1].split("?")[0]
+            if slug and slug in shipping_map:
+                listing["shipping"] = shipping_map[slug]
+                filled += 1
+        if filled:
+            log.info("Backfilled shipping for %d/%d listings from DOM", filled, len(listings))
+        else:
+            log.debug("DOM shipping map built but no slugs matched listing URLs")
 
     # Single DOM pass — flags purchase-in-progress, recent, and price-drop listings.
     pip_slugs, recent_slugs, price_drop_slugs = _extract_status_slugs(html)

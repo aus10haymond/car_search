@@ -328,7 +328,7 @@ def _build_html(
         "style='border-collapse:collapse;font-size:13px;width:100%'>"
         "<tr style='background:#f0f0f0;text-align:left'>"
         f"<th>#</th><th>Vehicle</th><th>Color</th><th>Trim</th><th>Price</th>"
-        f"<th>Mileage</th>{financing_th}<th>Score</th><th>Hybrid</th><th></th>"
+        f"<th>Mileage</th><th>Shipping</th>{financing_th}<th>Score</th><th>Hybrid</th><th></th>"
         "</tr>"
     )
 
@@ -368,6 +368,14 @@ def _build_html(
 
         color_cell = (r.get("color_exterior") or "").strip()
 
+        shipping = r.get("shipping")
+        if shipping is None:
+            shipping_cell = "<span style='color:#aaa'>—</span>"
+        elif shipping == 0:
+            shipping_cell = "<span style='color:#27ae60;font-weight:bold'>Free</span>"
+        else:
+            shipping_cell = f"${shipping:,.0f}"
+
         financing_td = (
             f"<td>${r.get('monthly_carvana') or r.get('monthly_estimated') or 0:,.0f}/mo</td>"
             if show_financing else ""
@@ -383,6 +391,7 @@ def _build_html(
             f"<td style='color:#555'>{(r.get('trim') or '')[:28]}</td>"
             f"<td>{price_cell}</td>"
             f"<td>{f'{mileage:,}' if mileage else 'N/A'}</td>"
+            f"<td style='text-align:center'>{shipping_cell}</td>"
             f"{financing_td}"
             f"<td style='text-align:center'>{int(r.get('value_score') or 0)}</td>"
             f"<td style='text-align:center'>{hybrid_cell}</td>"
