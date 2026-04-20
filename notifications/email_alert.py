@@ -327,7 +327,7 @@ def _build_html(
         "<table border='1' cellpadding='7' cellspacing='0' "
         "style='border-collapse:collapse;font-size:13px;width:100%'>"
         "<tr style='background:#f0f0f0;text-align:left'>"
-        f"<th>#</th><th>Vehicle</th><th>Color</th><th>Trim</th><th>Price</th>"
+        f"<th>#</th><th>Vehicle</th><th>Color</th><th>Trim</th><th>Drive</th><th>Price</th>"
         f"<th>Mileage</th><th>Shipping</th>{financing_th}<th>Score</th><th>Hybrid</th><th></th>"
         "</tr>"
     )
@@ -368,6 +368,13 @@ def _build_html(
 
         color_cell = (r.get("color_exterior") or "").strip()
 
+        drivetrain = r.get("drivetrain") or ""
+        drivetrain_cell = (
+            f"<span style='font-size:11px;background:#e8f0fe;color:#1a56db;"
+            f"padding:1px 5px;border-radius:3px;white-space:nowrap'>{drivetrain}</span>"
+            if drivetrain else "<span style='color:#aaa'>—</span>"
+        )
+
         shipping = r.get("shipping")
         if shipping is None:
             shipping_cell = "<span style='color:#aaa'>—</span>"
@@ -389,6 +396,7 @@ def _build_html(
             + "</td>"
             f"<td style='color:#555'>{color_cell}</td>"
             f"<td style='color:#555'>{(r.get('trim') or '')[:28]}</td>"
+            f"<td style='text-align:center'>{drivetrain_cell}</td>"
             f"<td>{price_cell}</td>"
             f"<td>{f'{mileage:,}' if mileage else 'N/A'}</td>"
             f"<td style='text-align:center'>{shipping_cell}</td>"

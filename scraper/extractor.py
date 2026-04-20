@@ -279,6 +279,19 @@ def normalize_vehicle(raw: dict, make: str, model: str, strategy: str) -> dict |
         if url and not url.startswith("http"):
             url = f"https://www.carvana.com/vehicle/{url}"
 
+        # ── drivetrain ────────────────────────────────────────────────────────
+        # Schema.org: driveWheelConfiguration (URL or string)
+        # Legacy: driveType / drivetrain / drive / drivetrainType
+        drivetrain_raw = (
+            raw.get("driveWheelConfiguration")
+            or raw.get("driveType")
+            or raw.get("drivetrain")
+            or raw.get("drive")
+            or raw.get("drivetrainType")
+            or ""
+        )
+        drivetrain = _normalize_drivetrain(str(drivetrain_raw))
+
         # ── colours ───────────────────────────────────────────────────────────
         color_ext = (
             raw.get("exteriorColor")
@@ -330,6 +343,7 @@ def normalize_vehicle(raw: dict, make: str, model: str, strategy: str) -> dict |
             "mileage":                mileage,
             "monthly_carvana":        monthly,
             "shipping":               None,  # backfilled by DOM pass in extract_listings
+            "drivetrain":             drivetrain,  # None if not found; backfilled by DOM pass
             "color_exterior":         str(color_ext).strip(),
             "url":                    url,
             "purchase_in_progress":   purchase_in_progress,
@@ -607,6 +621,24 @@ def extract_listings(html: str, make: str, model: str) -> list[dict]:
             else:
                 log.debug("DOM monthly map built but no slugs matched listing URLs")
 
+    # Backfill drivetrain from the rendered DOM for listings that didn't get it
+    # from structured data
+    if any(not v.get("drivetrain") for v in listings):
+        drivetrain_map = _extract_drivetrain_from_dom(html)
+        if drivetrain_map:
+            filled = 0
+            for listing in listings:
+                if listing.get("drivetrain"):
+                    continue
+                slug = (listing.get("url") or "").rstrip("/").split("/")[-1].split("?")[0]
+                if slug and slug in drivetrain_map:
+                    listing["drivetrain"] = drivetrain_map[slug]
+                    filled += 1
+            if filled:
+                log.info("Backfilled drivetrain for %d/%d listings from DOM", filled, len(listings))
+            else:
+                log.debug("DOM drivetrain map built but no slugs matched listing URLs")
+
     # Backfill shipping cost from the rendered DOM
     shipping_map = _extract_shipping_from_dom(html)
     if shipping_map:
@@ -649,6 +681,80 @@ def extract_listings(html: str, make: str, model: str) -> list[dict]:
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _normalize_drivetrain(raw: str) -> str | None:
+    """
+    Map any raw drivetrain string to one of: AWD, 4WD, FWD, RWD.
+    Handles schema.org URLs (e.g. "AllWheelDriveConfiguration"),
+    abbreviations (AWD, FWD, 4WD, RWD), and plain-English phrases.
+    Returns None if the value is empty or unrecognized.
+    """
+    if not raw:
+        return None
+    v = raw.lower().replace("-", "").replace("_", "").replace(" ", "")
+    if "allwheel" in v or "awd" in v:
+        return "AWD"
+    if "fourwheel" in v or "4wd" in v or "4x4" in v or "four" in v:
+        return "4WD"
+    if "frontwheel" in v or "fwd" in v or "front" in v:
+        return "FWD"
+    if "rearwheel" in v or "rwd" in v or "rear" in v:
+        return "RWD"
+    return None
+
+
+def _extract_drivetrain_from_dom(html: str) -> dict[str, str]:
+    """
+    Scrape drivetrain per vehicle slug from the rendered Carvana search results page.
+
+    Tries known data-testid selectors first, then falls back to scanning text
+    nodes near vehicle links for AWD/FWD/RWD/4WD/4x4 keywords.
+
+    Returns a dict of slug → normalized drivetrain string ("AWD", "FWD", etc.).
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    result: dict[str, str] = {}
+
+    _DT_RE = re.compile(r"\b(AWD|4WD|4x4|FWD|RWD|all[- ]?wheel|front[- ]?wheel|rear[- ]?wheel|four[- ]?wheel)\b", re.IGNORECASE)
+
+    def _slug_from_node(node) -> str | None:
+        for _ in range(12):
+            if node is None:
+                return None
+            link = node.find("a", href=lambda h: h and "/vehicle/" in h)
+            if link:
+                return str(link["href"]).rstrip("/").split("/")[-1].split("?")[0] or None
+            node = node.parent
+        return None
+
+    # Primary: known testid selectors
+    for selector in (
+        '[data-testid="drivetrain"]',
+        '[data-testid="drive-type"]',
+        '[data-testid*="drivetrain"]',
+        '[data-testid*="drive-type"]',
+    ):
+        for el in soup.select(selector):
+            normalized = _normalize_drivetrain(el.get_text(strip=True))
+            if normalized:
+                slug = _slug_from_node(el.parent)
+                if slug and slug not in result:
+                    result[slug] = normalized
+    if result:
+        log.debug("DOM drivetrain map (testid): %d entries", len(result))
+        return result
+
+    # Fallback: text-node scan for drivetrain keywords near vehicle links
+    for node in soup.find_all(string=_DT_RE):
+        normalized = _normalize_drivetrain(node.strip())
+        if normalized:
+            slug = _slug_from_node(node.parent)
+            if slug and slug not in result:
+                result[slug] = normalized
+
+    log.debug("DOM drivetrain map: %d slug→value entries", len(result))
+    return result
+
 
 def _to_float(val) -> float | None:
     if val is None:
