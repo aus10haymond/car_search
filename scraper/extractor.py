@@ -685,6 +685,86 @@ def extract_listings(html: str, make: str, model: str) -> list[dict]:
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 
+def fetch_listing_drivetrain(url: str, browser) -> str | None:
+    """
+    Load an individual Carvana listing page and return Carvana's own drivetrain
+    label (AWD/FWD/RWD/4WD). Returns None if not found.
+
+    Priority:
+      1. Schema.org ld+json driveWheelConfiguration / driveType fields
+      2. Known data-testid selectors in the Vehicle Details section
+      3. Label/value pattern — finds a "Drivetrain" label and reads its sibling
+      4. Broad AWD/FWD/RWD/4WD keyword scan of the page (last resort)
+    """
+    html = browser.get_page_content(url)
+    if not html:
+        return None
+
+    # ── Pass 1: ld+json ───────────────────────────────────────────────────────
+    blocks = re.findall(
+        r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>',
+        html,
+        re.DOTALL,
+    )
+    for block in blocks:
+        try:
+            data = json.loads(block)
+            if data.get("@type") == "Vehicle":
+                for field in ("driveWheelConfiguration", "driveType", "drivetrain", "drive", "drivetrainType"):
+                    raw = data.get(field) or ""
+                    normalized = _normalize_drivetrain(str(raw))
+                    if normalized:
+                        return normalized
+        except json.JSONDecodeError:
+            continue
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # ── Pass 2: known testid selectors ────────────────────────────────────────
+    for selector in (
+        '[data-testid="drivetrain"]',
+        '[data-testid="drive-type"]',
+        '[data-testid="driveWheelConfiguration"]',
+        '[data-testid*="drivetrain"]',
+        '[data-testid*="drive-type"]',
+    ):
+        el = soup.select_one(selector)
+        if el:
+            normalized = _normalize_drivetrain(el.get_text(strip=True))
+            if normalized:
+                return normalized
+
+    # ── Pass 3: label/value pattern ───────────────────────────────────────────
+    # Find an element whose text is "Drivetrain" / "Drive Type" and read the
+    # adjacent sibling element for the value.
+    _LABEL_RE = re.compile(r"^(drivetrain|drive\s*type|drive\s*wheel)$", re.IGNORECASE)
+    for label_node in soup.find_all(string=_LABEL_RE):
+        parent = label_node.parent
+        if not parent:
+            continue
+        for candidate in (
+            parent.find_next_sibling(),
+            parent.parent.find_next_sibling() if parent.parent else None,
+        ):
+            if candidate:
+                normalized = _normalize_drivetrain(candidate.get_text(strip=True))
+                if normalized:
+                    return normalized
+
+    # ── Pass 4: broad keyword scan (last resort) ──────────────────────────────
+    _DT_RE = re.compile(
+        r"\b(AWD|4WD|4x4|FWD|RWD|all[- ]?wheel\s+drive|front[- ]?wheel\s+drive|"
+        r"rear[- ]?wheel\s+drive|four[- ]?wheel\s+drive)\b",
+        re.IGNORECASE,
+    )
+    for node in soup.find_all(string=_DT_RE):
+        normalized = _normalize_drivetrain(node.strip())
+        if normalized:
+            return normalized
+
+    return None
+
+
 def _extract_drivetrain_from_dom(html: str) -> dict[str, str]:
     """
     Scrape drivetrain per vehicle slug from the rendered Carvana search results page.

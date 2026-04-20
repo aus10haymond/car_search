@@ -73,12 +73,31 @@ def _fetch_drivetrain_batch(vins: list[str]) -> dict[str, str]:
 def enrich_drivetrain(listings: list[dict]) -> None:
     """
     Populate the 'drivetrain' field on every listing that doesn't already
-    have one, using the NHTSA batch VIN decode API.
+    have one. Two-pass approach:
 
-    Listings are grouped by (make, model) and each group is sent as one
-    batch request (chunked at 50 VINs if needed). Mutates listings in-place.
+      1. Trim inference — parse AWD/FWD/RWD/4WD keywords from the listing's
+         trim string. Carvana's own trim label takes priority over any external
+         source, preventing mismatches like NHTSA calling a crossover AWD
+         system "4WD" when the manufacturer markets it as AWD.
+
+      2. NHTSA batch VIN decode — for any listing still unresolved after the
+         trim pass, call the free NHTSA API (one POST per make/model group,
+         chunked at 50 VINs per request).
+
+    Mutates listings in-place.
     """
-    # Group listings that need drivetrain by (make, model)
+    # ── Pass 1: Trim-based inference ──────────────────────────────────────────
+    trim_resolved = 0
+    for listing in listings:
+        if not listing.get("drivetrain"):
+            inferred = normalize_drivetrain(listing.get("trim") or "")
+            if inferred:
+                listing["drivetrain"] = inferred
+                trim_resolved += 1
+    if trim_resolved:
+        log.info("Drivetrain inferred from trim: %d listing(s)", trim_resolved)
+
+    # ── Pass 2: NHTSA batch for any still unresolved ──────────────────────────
     by_model: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for listing in listings:
         if not listing.get("drivetrain"):
@@ -86,7 +105,7 @@ def enrich_drivetrain(listings: list[dict]) -> None:
             by_model[key].append(listing)
 
     if not by_model:
-        log.debug("All listings already have drivetrain — skipping NHTSA lookup")
+        log.debug("All listings have drivetrain after trim pass — skipping NHTSA")
         return
 
     total_resolved = 0

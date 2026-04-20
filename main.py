@@ -32,7 +32,7 @@ from profiles import SearchProfile, load_profiles, resolve_reference_doc, resolv
 from utils.logging_config import setup_logging, start_run_log, end_run_log
 from scraper.urls import build_search_url
 from scraper.browser import Browser
-from scraper.extractor import extract_listings
+from scraper.extractor import extract_listings, fetch_listing_drivetrain
 from analysis.rules import apply_filters, enrich_listings
 from utils.vin_decode import enrich_drivetrain
 from analysis.llm import LLMAnalyzer, LLMResult
@@ -144,6 +144,14 @@ def _run_profile(
         # ── Phase 4.5: Drivetrain lookup via NHTSA VIN decode ────────────────
         log.info("--- PHASE 4.5: DRIVETRAIN LOOKUP ---")
         enrich_drivetrain(enriched)
+
+        # ── Phase 4.6: Override drivetrain for table rows from listing pages ──
+        # NHTSA misclassifies some hybrid AWD systems as 4WD. Scraping the
+        # individual Carvana listing page for the ~5-20 table-visible listings
+        # gets Carvana's own label, which is accurate and consistent with what
+        # the reader sees when they click through.
+        log.info("--- PHASE 4.6: LISTING PAGE DRIVETRAIN SCRAPE ---")
+        _scrape_listing_drivetrains(enriched, num_vehicles=len(profile.vehicles))
 
         # ── Phase 5: LLM analysis (per-make, isolated reference docs) ────────
         log.info("--- PHASE 5: LLM ANALYSIS ---")
@@ -346,6 +354,60 @@ def _scrape(run_id: str, profile: SearchProfile) -> tuple[list[dict], list[dict]
             })
 
     return all_raw, vehicle_stats
+
+
+def _scrape_listing_drivetrains(enriched: list[dict], num_vehicles: int) -> None:
+    """
+    Load individual Carvana listing pages for the top table-row candidates and
+    update their drivetrain field with Carvana's own label.
+
+    Uses the same per-model cap as the email table (5 for multi-vehicle profiles,
+    15 for single-vehicle) so every listing the reader sees gets an accurate value.
+    NHTSA data on non-table listings is unaffected.
+    """
+    table_limit = 5 if num_vehicles > 1 else 15
+
+    # Mirror the email table's fill logic: top-N per (make, model) in score order
+    seen_counts: dict[tuple[str, str], int] = {}
+    table_candidates: list[dict] = []
+    for r in enriched:
+        key = (r.get("make") or "", r.get("model") or "")
+        if seen_counts.get(key, 0) < table_limit:
+            table_candidates.append(r)
+            seen_counts[key] = seen_counts.get(key, 0) + 1
+
+    to_scrape = [r for r in table_candidates if r.get("url")]
+    if not to_scrape:
+        log.debug("No listing URLs available — skipping listing page drivetrain scrape")
+        return
+
+    log.info("Scraping Carvana listing pages for drivetrain: %d listing(s)", len(to_scrape))
+    updated = 0
+
+    with Browser() as detail_browser:
+        for r in to_scrape:
+            url = r.get("url", "")
+            drivetrain = fetch_listing_drivetrain(url, detail_browser)
+            if drivetrain:
+                old = r.get("drivetrain")
+                if old != drivetrain:
+                    log.info(
+                        "Drivetrain updated — %s %s %s %s: %s → %s",
+                        r.get("year"), r.get("make"), r.get("model"),
+                        (r.get("trim") or "")[:24], old or "None", drivetrain,
+                    )
+                r["drivetrain"] = drivetrain
+                updated += 1
+            else:
+                log.debug(
+                    "No drivetrain found on listing page: %s %s %s",
+                    r.get("year"), r.get("make"), r.get("model"),
+                )
+
+    log.info(
+        "Listing page drivetrain scrape complete: %d/%d resolved",
+        updated, len(to_scrape),
+    )
 
 
 def _deduplicate(all_raw: list[dict]) -> list[dict]:
