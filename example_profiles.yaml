@@ -1,0 +1,88 @@
+# Carvana Tracker — Search Profiles
+#
+# Copy this file to profiles.yaml and fill in your own values.
+# Each profile runs an independent search and sends results to its own recipients.
+# Add as many profiles as needed. Each must have a unique profile_id.
+#
+# ── Required fields ───────────────────────────────────────────────────────────
+#   profile_id        — short slug used internally (letters, numbers, underscores)
+#   label             — display name shown in email subject and body
+#   vehicles          — list of [make, model] pairs to search
+#   max_price         — upper price limit in dollars (omit or set to null for no limit)
+#   max_mileage       — upper mileage limit
+#   min_year          — earliest model year to include
+#   max_year          — latest model year to include
+#   email_to          — list of recipient email addresses
+#
+# ── Optional fields ───────────────────────────────────────────────────────────
+#   fuel_type_filters      — list of fuel types: Hybrid, Gas, or null (all).
+#                            Defaults to [null] (no filter) if omitted.
+#   model_preference       — models listed best→worst; drives sort order and score bonus.
+#                            Omit for no preference (pure value-score ranking).
+#   excluded_years         — specific model years to skip within the min/max range.
+#                            Example: [2022] drops only 2022 while keeping all others.
+#   excluded_trim_keywords — trim substrings to drop (case-insensitive).
+#                            Example: [Sport, Base] removes any trim containing those words.
+#   show_financing         — true/false, whether to show Est. Payment column (default: true).
+#   down_payment           — override the global down payment for this profile (dollars).
+#   reference_doc_path     — path to a markdown file with vehicle context for the LLM.
+#                            If omitted, per-vehicle docs are auto-discovered from vehicle_reference/.
+
+profiles:
+
+  # ── Example 1: Multi-model SUV search ────────────────────────────────────────
+  # Searches across several models, prefers hybrids, ranks by model preference.
+  - profile_id: suv_search
+    label: "SUV Search"
+    vehicles:
+      - [Honda, CR-V]
+      - [Toyota, RAV4]
+      - [Subaru, Forester]
+      - [Kia, Sportage]
+    max_price: 32000
+    max_mileage: 80000
+    min_year: 2021
+    max_year: 2025
+    fuel_type_filters: [Hybrid, Gas]
+    model_preference: [CR-V, RAV4, Forester, Sportage]
+    show_financing: true
+    down_payment: 3000
+    email_to:
+      - you@example.com
+
+  # ── Example 2: Single-model search with trim exclusion ────────────────────────
+  # Targets one vehicle, drops the base trim, uses a reference doc for LLM context.
+  - profile_id: highlander_search
+    label: "Grand Highlander Hybrid Search"
+    vehicles:
+      - [Toyota, Grand Highlander]
+    max_price: null          # no upper price limit
+    max_mileage: 50000
+    min_year: 2024
+    max_year: 2026
+    fuel_type_filters: [Hybrid]
+    excluded_trim_keywords: [MAX]   # drop the MAX trim (different powertrain)
+    show_financing: false
+    email_to:
+      - you@example.com
+      - partner@example.com
+    reference_doc_path: ./vehicle_reference/grand_highlander_hybrid.md
+
+  # ── Example 3: Budget used-car search with excluded years ─────────────────────
+  # Older model year range, skips a known problem year, gas only.
+  - profile_id: budget_search
+    label: "Budget Sedan Search"
+    vehicles:
+      - [Honda, Civic]
+      - [Toyota, Corolla]
+      - [Mazda, Mazda3]
+    max_price: 18000
+    max_mileage: 90000
+    min_year: 2018
+    max_year: 2022
+    excluded_years: [2019]          # skip a known model-year issue
+    fuel_type_filters: [Gas]
+    show_financing: true
+    down_payment: 2000
+    email_to:
+      - you@example.com
