@@ -544,40 +544,25 @@ _TRIM_KEY_DATA: dict[tuple[str, str], list[tuple[str, str]]] = {
 }
 
 
-def _trim_matches_listings(trim_name: str, listing_trims: set[str]) -> bool:
-    """
-    Return True if `trim_name` corresponds to any trim in `listing_trims`.
-
-    Matching strategy (case-insensitive):
-      1. Strip parenthetical year ranges from the key name, e.g. "LX (2021–22)" → "LX"
-      2. Check if the normalized key name is a substring of any listing trim,
-         OR any listing trim is a substring of the normalized key name.
-    """
-    normalized = re.sub(r"\s*\([^)]+\)", "", trim_name).strip().lower()
-    if not normalized:
-        return False
-    for lt in listing_trims:
-        if normalized in lt or lt in normalized:
-            return True
-    return False
-
-
 def _build_trim_key_html(listings: list[dict]) -> str:
     """
-    Build a collapsible trim-level key for every make/model present in `listings`,
-    filtered to only the trim entries that match a listing actually in the results.
+    Build a trim-level key for every make/model present in `listings`, showing
+    only the key entries whose normalized name matches a trim string that appears
+    in the table (one listing trim → one key entry, in key-data order).
 
-    Each model section uses a <details>/<summary> element so it is collapsed by
-    default. Clients that don't support <details> (e.g. Outlook) show it open,
-    which is equivalent to the previous behavior.
+    Matching: strip parenthetical suffixes from the key name (e.g. "LX (2021–22)"
+    → "LX"), then check if that normalized name equals or is contained in the
+    listing trim string (case-insensitive). This is directional — the key name
+    must be found inside the listing trim, preventing "XLE" from pulling in
+    "XLE Premium".
 
     Returns an empty string if no matching data is found.
     """
-    # Collect unique (make, model) pairs and the set of listing trims for each.
+    # Collect unique (make, model) pairs and the ordered unique trims for each.
     seen: list[tuple[str, str]] = []
     seen_set: set[tuple[str, str]] = set()
     display_labels: dict[tuple[str, str], tuple[str, str]] = {}
-    listing_trims_by_key: dict[tuple[str, str], set[str]] = {}
+    listing_trims_by_key: dict[tuple[str, str], list[str]] = {}
 
     for r in listings:
         make_raw  = (r.get("make") or "").strip()
@@ -588,9 +573,11 @@ def _build_trim_key_html(listings: list[dict]) -> str:
             seen_set.add(key)
             display_labels[key] = (make_raw, model_raw)
         if key in _TRIM_KEY_DATA:
-            trim_val = (r.get("trim") or "").strip().lower()
+            trim_val = (r.get("trim") or "").strip()
             if trim_val:
-                listing_trims_by_key.setdefault(key, set()).add(trim_val)
+                bucket = listing_trims_by_key.setdefault(key, [])
+                if trim_val not in bucket:
+                    bucket.append(trim_val)
 
     if not seen:
         return ""
@@ -599,31 +586,34 @@ def _build_trim_key_html(listings: list[dict]) -> str:
         "<div style='margin-top:24px'>",
         "<h3 style='margin-bottom:6px'>Trim Level Key</h3>",
         "<p style='font-size:12px;color:#666;margin-top:0;margin-bottom:10px'>"
-        "Trims present in this run's results. Click a model to expand. "
+        "Descriptions for the trims shown in the table above. "
         "⭐ = recommended value trim. ⚠ = flagged / out of scope.</p>",
     ]
 
     for make_key, model_key in seen:
-        all_trims    = _TRIM_KEY_DATA[(make_key, model_key)]
-        listing_trims = listing_trims_by_key.get((make_key, model_key), set())
+        all_key_trims  = _TRIM_KEY_DATA[(make_key, model_key)]
+        listing_trims  = listing_trims_by_key.get((make_key, model_key), [])
         make_display, model_display = display_labels[(make_key, model_key)]
 
-        # Filter to only trims that match a listing in the results table
-        matched = [
-            (name, desc) for name, desc in all_trims
-            if _trim_matches_listings(name, listing_trims)
-        ]
+        # For each listing trim, find the first key entry whose normalized name
+        # is contained in it. Collect matched key indices (preserving key order).
+        matched_indices: set[int] = set()
+        for lt in listing_trims:
+            lt_lower = lt.lower()
+            for idx, (trim_name, _) in enumerate(all_key_trims):
+                normalized = re.sub(r"\s*\([^)]+\)", "", trim_name).strip().lower()
+                if normalized and normalized in lt_lower:
+                    matched_indices.add(idx)
+                    break
+
+        matched = [all_key_trims[i] for i in sorted(matched_indices)]
         if not matched:
             continue
 
         parts.append(
-            f"<details style='margin-bottom:10px'>"
-            f"<summary style='cursor:pointer;font-size:13px;font-weight:bold;"
-            f"padding:4px 0;list-style:none'>"
-            f"▶ {make_display} {model_display} "
-            f"<span style='font-weight:normal;color:#666'>({len(matched)} trim{'s' if len(matched) != 1 else ''} in results)</span>"
-            f"</summary>"
-            f"<table style='font-size:12px;border-collapse:collapse;margin-top:6px;width:100%'>"
+            f"<div style='margin-bottom:14px'>"
+            f"<b style='font-size:13px'>{make_display} {model_display}</b>"
+            f"<table style='font-size:12px;border-collapse:collapse;margin-top:4px;width:100%'>"
         )
         for trim_name, description in matched:
             row_style = "color:#c0392b" if "⚠" in trim_name or "⚠" in description else "color:#333"
@@ -634,7 +624,7 @@ def _build_trim_key_html(listings: list[dict]) -> str:
                 f"<td style='padding:2px 0;color:#555'>{description}</td>"
                 f"</tr>"
             )
-        parts.append("</table></details>")
+        parts.append("</table></div>")
 
     parts.append("</div>")
     return "\n".join(parts)
