@@ -34,6 +34,7 @@ from scraper.urls import build_search_url
 from scraper.browser import Browser
 from scraper.extractor import extract_listings
 from analysis.rules import apply_filters, enrich_listings
+from utils.vin_decode import enrich_drivetrain
 from analysis.llm import LLMAnalyzer, LLMResult
 from storage.csv_writer import write_results
 from storage import history_db
@@ -139,6 +140,10 @@ def _run_profile(
             -(x.get("value_score") or 0),
         ))
         _log_enrichment_summary(enriched)
+
+        # ── Phase 4.5: Drivetrain lookup via NHTSA VIN decode ────────────────
+        log.info("--- PHASE 4.5: DRIVETRAIN LOOKUP ---")
+        enrich_drivetrain(enriched)
 
         # ── Phase 5: LLM analysis (per-make, isolated reference docs) ────────
         log.info("--- PHASE 5: LLM ANALYSIS ---")

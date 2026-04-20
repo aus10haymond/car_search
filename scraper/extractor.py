@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 
 from bs4 import BeautifulSoup
 
+from utils.vin_decode import normalize_drivetrain as _normalize_drivetrain
+
 log = logging.getLogger(__name__)
 
 
@@ -681,26 +683,6 @@ def extract_listings(html: str, make: str, model: str) -> list[dict]:
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
-
-def _normalize_drivetrain(raw: str) -> str | None:
-    """
-    Map any raw drivetrain string to one of: AWD, 4WD, FWD, RWD.
-    Handles schema.org URLs (e.g. "AllWheelDriveConfiguration"),
-    abbreviations (AWD, FWD, 4WD, RWD), and plain-English phrases.
-    Returns None if the value is empty or unrecognized.
-    """
-    if not raw:
-        return None
-    v = raw.lower().replace("-", "").replace("_", "").replace(" ", "")
-    if "allwheel" in v or "awd" in v:
-        return "AWD"
-    if "fourwheel" in v or "4wd" in v or "4x4" in v or "four" in v:
-        return "4WD"
-    if "frontwheel" in v or "fwd" in v or "front" in v:
-        return "FWD"
-    if "rearwheel" in v or "rwd" in v or "rear" in v:
-        return "RWD"
-    return None
 
 
 def _extract_drivetrain_from_dom(html: str) -> dict[str, str]:
