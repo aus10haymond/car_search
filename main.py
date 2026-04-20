@@ -443,15 +443,21 @@ def _run_llm(
             r.get("make", "") for r in listings if r.get("make")
         ))
 
+        # For multi-model profiles, cap each make at top 5 listings for the LLM
+        # so that every vehicle the LLM recommends is guaranteed to appear in
+        # the email table (which also shows top 5 per model).
+        llm_cap = 5 if len(makes) > 1 else 30
+
         per_make_results: list[tuple[str, LLMResult]] = []
         for make in makes:
             make_listings = [r for r in listings if r.get("make", "").lower() == make.lower()]
+            llm_make_listings = make_listings[:llm_cap]
             ref_doc = resolve_reference_doc_for_make(profile, make)
             log.info(
-                "LLM analysis — %s: %d listings, %d-char ref doc",
-                make, len(make_listings), len(ref_doc),
+                "LLM analysis — %s: %d listings (capped at %d for LLM), %d-char ref doc",
+                make, len(make_listings), len(llm_make_listings), len(ref_doc),
             )
-            result = analyzer.analyze(make_listings, reference_doc=ref_doc)
+            result = analyzer.analyze(llm_make_listings, reference_doc=ref_doc)
             per_make_results.append((make, result))
 
         # Cross-model synthesis: one final call that sees all makes together
@@ -462,10 +468,23 @@ def _run_llm(
                 if result.analysis
             ]
             if successful:
-                log.info("Running cross-model synthesis across %d makes", len(successful))
-                synthesis_prompt = analyzer.build_synthesis_prompt(listings, successful)
+                # Build a top-5-per-(make, model) slice for synthesis — mirrors
+                # the email table cap so LLM picks are always present in the table.
+                _seen: dict[tuple, int] = {}
+                top_for_synthesis: list[dict] = []
+                for r in listings:
+                    key = (r.get("make", ""), r.get("model", ""))
+                    if _seen.get(key, 0) < 5:
+                        top_for_synthesis.append(r)
+                        _seen[key] = _seen.get(key, 0) + 1
+
+                log.info(
+                    "Running cross-model synthesis across %d makes (%d listings)",
+                    len(successful), len(top_for_synthesis),
+                )
+                synthesis_prompt = analyzer.build_synthesis_prompt(top_for_synthesis, successful)
                 synthesis_result = analyzer.analyze(
-                    listings, reference_doc="", _prompt_override=synthesis_prompt
+                    top_for_synthesis, reference_doc="", _prompt_override=synthesis_prompt
                 )
                 per_make_results.append(("_synthesis", synthesis_result))
 
