@@ -1,0 +1,9 @@
+# Dashboard backend dependencies
+# fastapi, uvicorn, and pydantic are already present in the main environment.
+# Install these if running the tray helper (Phase 1) or packaging for production.
+
+fastapi>=0.111
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9   # required by FastAPI for form/file upload endpoints
+pystray>=0.19             # system tray helper (dashboard/tray/tray_app.py)
+Pillow>=10.0              # required by pystray for icon rendering
