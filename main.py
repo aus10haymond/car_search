@@ -114,6 +114,7 @@ def _run_profile(
             min_year=profile.min_year,
             max_year=profile.max_year,
             excluded_trim_keywords=profile.excluded_trim_keywords,
+            excluded_years=profile.excluded_years,
         )
         if not filtered:
             log.warning("No listings passed filters — profile complete with no output.")

@@ -31,6 +31,7 @@ def apply_filters(
     min_year: int,
     max_year: int,
     excluded_trim_keywords: list[str] | None = None,
+    excluded_years: list[int] | None = None,
 ) -> list[dict]:
     """
     Remove listings that:
@@ -38,12 +39,14 @@ def apply_filters(
     - exceed max_price
     - exceed max_mileage
     - are outside min_year / max_year range
+    - match any year in excluded_years
     - contain any excluded_trim_keywords in their trim (case-insensitive)
     Logs how many were removed and why.
     """
     removed = defaultdict(int)
     kept = []
     _excluded = [k.lower() for k in (excluded_trim_keywords or [])]
+    _excluded_years = set(excluded_years or [])
 
     for listing in listings:
         price   = listing.get("price")
@@ -68,6 +71,9 @@ def apply_filters(
             continue
         if year is not None and year > max_year:
             removed["over_year"] += 1
+            continue
+        if year is not None and year in _excluded_years:
+            removed["excluded_year"] += 1
             continue
         if _excluded and any(kw in trim for kw in _excluded):
             removed["excluded_trim"] += 1

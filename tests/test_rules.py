@@ -71,6 +71,30 @@ def test_filter_removes_over_year():
     assert apply_filters(listings, **_F) == []
 
 
+def test_filter_removes_excluded_year():
+    listings = [_listing(year=2022)]
+    assert apply_filters(listings, **_F, excluded_years=[2022]) == []
+
+
+def test_filter_keeps_non_excluded_years():
+    listings = [_listing(year=2021), _listing(year=2022), _listing(year=2023)]
+    result = apply_filters(listings, **_F, excluded_years=[2022])
+    assert len(result) == 2
+    assert all(l["year"] != 2022 for l in result)
+
+
+def test_filter_excluded_years_none_year_passes():
+    """A listing with no year should not be excluded by excluded_years."""
+    listings = [_listing(year=None)]
+    assert len(apply_filters(listings, **_F, excluded_years=[2022])) == 1
+
+
+def test_filter_excluded_years_empty_list():
+    """Empty excluded_years should not filter anything extra."""
+    listings = [_listing(year=2022)]
+    assert len(apply_filters(listings, **_F, excluded_years=[])) == 1
+
+
 def test_filter_keeps_none_mileage():
     """None mileage should not be filtered — we don't have enough info."""
     listings = [_listing(mileage=None)]

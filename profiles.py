@@ -35,6 +35,7 @@ class SearchProfile:
     model_preference:         list[str] = field(default_factory=list)  # ordered best→worst; [] = no preference
     reference_doc_path:       Optional[str] = None
     excluded_trim_keywords:   list[str] = field(default_factory=list)  # case-insensitive substrings to drop
+    excluded_years:           list[int] = field(default_factory=list)  # specific years to skip within min/max range
     show_financing:           bool = True          # include Est. Payment column in email table
     down_payment:             Optional[int] = None  # override config.DOWN_PAYMENT for this profile
 
@@ -110,6 +111,9 @@ def load_profiles(path: str) -> list[SearchProfile]:
         excluded_trim_raw = raw.get("excluded_trim_keywords") or []
         excluded_trim_keywords = [str(k).lower() for k in excluded_trim_raw]
 
+        excluded_years_raw = raw.get("excluded_years") or []
+        excluded_years = [int(y) for y in excluded_years_raw]
+
         profiles.append(SearchProfile(
             profile_id=pid,
             label=str(raw["label"]),
@@ -123,6 +127,7 @@ def load_profiles(path: str) -> list[SearchProfile]:
             model_preference=model_preference,
             reference_doc_path=raw.get("reference_doc_path"),
             excluded_trim_keywords=excluded_trim_keywords,
+            excluded_years=excluded_years,
             show_financing=bool(raw.get("show_financing", True)),
             down_payment=int(raw["down_payment"]) if raw.get("down_payment") is not None else None,
         ))
