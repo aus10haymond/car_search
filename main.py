@@ -48,12 +48,13 @@ log = logging.getLogger(__name__)
 # ── Main run cycle ────────────────────────────────────────────────────────────
 
 def run_once(
-    profiles:      list[SearchProfile],
-    skip_llm:      bool = False,
-    force_backend: str | None = None,
-    dry_run:       bool = False,
-    force_email:   bool = False,
-    no_email:      bool = False,
+    profiles:       list[SearchProfile],
+    skip_llm:       bool = False,
+    force_backend:  str | None = None,
+    dry_run:        bool = False,
+    force_email:    bool = False,
+    no_email:       bool = False,
+    preview_output: str | None = None,
 ) -> list[dict]:
     """Run all profiles in sequence. Returns combined enriched listings from all profiles."""
     all_enriched: list[dict] = []
@@ -71,6 +72,7 @@ def run_once(
             dry_run=dry_run,
             force_email=force_email,
             no_email=no_email,
+            preview_output=preview_output,
         )
         all_enriched.extend(result)
 
@@ -78,12 +80,13 @@ def run_once(
 
 
 def _run_profile(
-    profile:       SearchProfile,
-    skip_llm:      bool = False,
-    force_backend: str | None = None,
-    dry_run:       bool = False,
-    force_email:   bool = False,
-    no_email:      bool = False,
+    profile:        SearchProfile,
+    skip_llm:       bool = False,
+    force_backend:  str | None = None,
+    dry_run:        bool = False,
+    force_email:    bool = False,
+    no_email:       bool = False,
+    preview_output: str | None = None,
 ) -> list[dict]:
     """Execute one full search-and-save cycle for a single profile."""
     start_time = time.monotonic()
@@ -99,59 +102,69 @@ def _run_profile(
         log.info("--- PHASE 1: SCRAPING ---")
         fuel_filters = profile.fuel_type_filters or [None]
         log.info("Fuel type searches: %s", ", ".join(f or "all" for f in fuel_filters))
-        all_raw, vehicle_stats = _scrape(run_id, profile)
+        all_raw, vehicle_stats, scrape_browser = _scrape(run_id, profile)
         _log_scrape_summary(vehicle_stats, all_raw)
 
-        # ── Phase 2: Deduplicate ──────────────────────────────────────────────
-        log.info("--- PHASE 2: DEDUPLICATION ---")
-        deduped = _deduplicate(all_raw)
+        # scrape_browser must be closed regardless of what happens next
+        try:
+            # ── Phase 2: Deduplicate ──────────────────────────────────────────
+            log.info("--- PHASE 2: DEDUPLICATION ---")
+            deduped = _deduplicate(all_raw)
 
-        # ── Phase 3: Filter ───────────────────────────────────────────────────
-        log.info("--- PHASE 3: FILTERING ---")
-        filtered = apply_filters(
-            deduped,
-            max_price=profile.max_price,
-            max_mileage=profile.max_mileage,
-            min_year=profile.min_year,
-            max_year=profile.max_year,
-            excluded_trim_keywords=profile.excluded_trim_keywords,
-            excluded_years=profile.excluded_years,
-        )
-        if not filtered:
-            log.warning("No listings passed filters — profile complete with no output.")
-            return []
+            # ── Phase 3: Filter ───────────────────────────────────────────────
+            log.info("--- PHASE 3: FILTERING ---")
+            filtered = apply_filters(
+                deduped,
+                max_price=profile.max_price,
+                max_mileage=profile.max_mileage,
+                min_year=profile.min_year,
+                max_year=profile.max_year,
+                excluded_trim_keywords=profile.excluded_trim_keywords,
+                excluded_years=profile.excluded_years,
+            )
+            if not filtered:
+                log.warning("No listings passed filters — profile complete with no output.")
+                return []
 
-        # ── Phase 4: Enrich + score ───────────────────────────────────────────
-        log.info("--- PHASE 4: ENRICHMENT & SCORING ---")
-        has_hybrid_interest = any(f == "Hybrid" for f in (profile.fuel_type_filters or []))
-        enriched = enrich_listings(
-            filtered,
-            max_year=profile.max_year,
-            max_mileage=profile.max_mileage,
-            min_year=profile.min_year,
-            model_preference=profile.model_preference,
-            hybrid_bonus=has_hybrid_interest,
-            down_payment=profile.down_payment,
-        )
-        _pref = profile.model_preference
-        _n    = len(_pref)
-        enriched.sort(key=lambda x: (
-            _pref.index(x["model"]) if x.get("model") in _pref else _n,
-            -(x.get("value_score") or 0),
-        ))
-        _log_enrichment_summary(enriched)
+            # ── Phase 4: Enrich + score ───────────────────────────────────────
+            log.info("--- PHASE 4: ENRICHMENT & SCORING ---")
+            has_hybrid_interest = any(f == "Hybrid" for f in (profile.fuel_type_filters or []))
+            enriched = enrich_listings(
+                filtered,
+                max_year=profile.max_year,
+                max_mileage=profile.max_mileage,
+                min_year=profile.min_year,
+                model_preference=profile.model_preference,
+                hybrid_bonus=has_hybrid_interest,
+                down_payment=profile.down_payment,
+            )
+            _pref = profile.model_preference
+            _n    = len(_pref)
+            enriched.sort(key=lambda x: (
+                _pref.index(x["model"]) if x.get("model") in _pref else _n,
+                -(x.get("value_score") or 0),
+            ))
+            _log_enrichment_summary(enriched)
 
-        # ── Phase 4.5: Drivetrain lookup via NHTSA VIN decode ────────────────
-        log.info("--- PHASE 4.5: DRIVETRAIN LOOKUP ---")
-        enrich_drivetrain(enriched)
+            # ── Phase 4.5: Drivetrain lookup via NHTSA VIN decode ────────────
+            log.info("--- PHASE 4.5: DRIVETRAIN LOOKUP ---")
+            enrich_drivetrain(enriched)
 
-        # ── Phase 4.6: Override drivetrain for table rows from listing pages ──
-        # NHTSA misclassifies some hybrid AWD systems as 4WD. Scraping the
-        # individual Carvana listing page for the ~5-20 table-visible listings
-        # gets Carvana's own label, which is accurate and consistent with what
-        # the reader sees when they click through.
-        log.info("--- PHASE 4.6: LISTING PAGE DRIVETRAIN SCRAPE ---")
-        _scrape_listing_drivetrains(enriched, num_vehicles=len(profile.vehicles))
+            # ── Phase 4.6: Override drivetrain for table rows from listing pages
+            # NHTSA misclassifies some hybrid AWD systems as 4WD. Scraping the
+            # individual Carvana listing page for the ~5-20 table-visible listings
+            # gets Carvana's own label, which is accurate and consistent with what
+            # the reader sees when they click through.
+            # The main scrape browser is reused (same trusted session) so Carvana's
+            # bot detection does not flag the requests.
+            log.info("--- PHASE 4.6: LISTING PAGE DRIVETRAIN SCRAPE ---")
+            _scrape_listing_drivetrains(
+                enriched,
+                num_vehicles=len(profile.vehicles),
+                browser=scrape_browser,
+            )
+        finally:
+            scrape_browser.close()
 
         # ── Phase 5: LLM analysis (per-make, isolated reference docs) ────────
         log.info("--- PHASE 5: LLM ANALYSIS ---")
@@ -199,9 +212,11 @@ def _run_profile(
         else:
             log.debug("Validation skipped (no analysis or LLM disabled)")
 
-        if dry_run:
+        if dry_run or preview_output:
             _print_summary(enriched)
             _print_llm_result(llm_result)
+            if preview_output:
+                _write_preview_html(enriched, llm_result, profile, preview_output)
             log.info("Dry run complete — no data saved.")
             return enriched
 
@@ -295,68 +310,105 @@ def _run_profile(
         end_run_log(run_log_handler)
 
 
+# ── Preview helper ────────────────────────────────────────────────────────────
+
+def _write_preview_html(
+    enriched:    list[dict],
+    llm_result:  LLMResult,
+    profile:     SearchProfile,
+    output_path: str,
+) -> None:
+    """Build email HTML with empty alert signals and write it to output_path.
+
+    Called when --preview-output is passed.  No history DB is queried because
+    this is a dry run — new_vins, price_drops, and trends are left empty so the
+    HTML still renders correctly (it just won't show alert badges).
+    """
+    email_html = build_email_html(
+        enriched, llm_result, [],
+        trends={}, new_vins=set(),
+        profile_label=profile.label,
+        show_financing=profile.show_financing,
+        down_payment=profile.down_payment,
+        num_vehicles=len(profile.vehicles),
+    )
+    with open(output_path, "w", encoding="utf-8") as fh:
+        fh.write(email_html)
+    log.info("Email preview written to: %s", output_path)
+
+
 # ── Scraping ──────────────────────────────────────────────────────────────────
 
-def _scrape(run_id: str, profile: SearchProfile) -> tuple[list[dict], list[dict]]:
+def _scrape(run_id: str, profile: SearchProfile) -> tuple[list[dict], list[dict], Browser]:
     """Scrape all vehicles for a profile across all configured fuel types.
-    Returns (all_listings, per_vehicle_stats)."""
+    Returns (all_listings, per_vehicle_stats, browser).
+
+    The browser is returned still open so Phase 4.6 can reuse the established
+    Carvana session for individual listing page loads. The caller MUST close it.
+    """
     all_raw: list[dict] = []
     vehicle_stats: list[dict] = []
 
     fuel_types = profile.fuel_type_filters or [None]
 
-    with Browser() as browser:
-        for make, model in profile.vehicles:
-            min_year, max_year = profile.min_year, profile.max_year
-            vehicle_total = 0
-            pages_scraped = 0
-            strategy_used = "none"
-            t0 = time.monotonic()
+    browser = Browser()
+    browser.start()
 
-            for fuel_type in fuel_types:
-                browser.reset_context()
-                label = fuel_type or "all"
-                log.info("Scraping %s %s [%s]...", make, model, label)
+    for make, model in profile.vehicles:
+        min_year, max_year = profile.min_year, profile.max_year
+        vehicle_total = 0
+        pages_scraped = 0
+        strategy_used = "none"
+        t0 = time.monotonic()
 
-                for page in range(1, config.MAX_PAGES_PER_SEARCH + 1):
-                    url = build_search_url(make, model, min_year, max_year, page, fuel_type=fuel_type)
-                    log.debug("URL: %s", url)
+        for fuel_type in fuel_types:
+            browser.reset_context()
+            label = fuel_type or "all"
+            log.info("Scraping %s %s [%s]...", make, model, label)
 
-                    html = browser.get_page_content(url)
-                    if not html:
-                        log.warning("No HTML returned for %s %s [%s] page %d", make, model, label, page)
-                        break
+            for page in range(1, config.MAX_PAGES_PER_SEARCH + 1):
+                url = build_search_url(make, model, min_year, max_year, page, fuel_type=fuel_type)
+                log.debug("URL: %s", url)
 
-                    listings = extract_listings(html, make, model)
+                html = browser.get_page_content(url)
+                if not html:
+                    log.warning("No HTML returned for %s %s [%s] page %d", make, model, label, page)
+                    break
 
-                    if listings:
-                        strategy_used = listings[0].get("extraction_strategy", "unknown")
-                        pages_scraped = max(pages_scraped, page)
+                listings = extract_listings(html, make, model)
 
-                    if not listings:
-                        log.info("No listings on page %d for %s %s [%s] — stopping", page, make, model, label)
-                        break
+                if listings:
+                    strategy_used = listings[0].get("extraction_strategy", "unknown")
+                    pages_scraped = max(pages_scraped, page)
 
-                    all_raw.extend(listings)
-                    vehicle_total += len(listings)
-                    log.debug("%s %s [%s] page %d: %d listings", make, model, label, page, len(listings))
+                if not listings:
+                    log.info("No listings on page %d for %s %s [%s] — stopping", page, make, model, label)
+                    break
 
-                    if len(listings) < 20:
-                        break
+                all_raw.extend(listings)
+                vehicle_total += len(listings)
+                log.debug("%s %s [%s] page %d: %d listings", make, model, label, page, len(listings))
 
-            elapsed = time.monotonic() - t0
-            vehicle_stats.append({
-                "make": make, "model": model,
-                "listings": vehicle_total,
-                "pages": pages_scraped,
-                "strategy": strategy_used,
-                "elapsed_s": round(elapsed, 1),
-            })
+                if len(listings) < 20:
+                    break
 
-    return all_raw, vehicle_stats
+        elapsed = time.monotonic() - t0
+        vehicle_stats.append({
+            "make": make, "model": model,
+            "listings": vehicle_total,
+            "pages": pages_scraped,
+            "strategy": strategy_used,
+            "elapsed_s": round(elapsed, 1),
+        })
+
+    return all_raw, vehicle_stats, browser
 
 
-def _scrape_listing_drivetrains(enriched: list[dict], num_vehicles: int) -> None:
+def _scrape_listing_drivetrains(
+    enriched: list[dict],
+    num_vehicles: int,
+    browser: Browser,
+) -> None:
     """
     Load individual Carvana listing pages for the top table-row candidates and
     update their drivetrain field with Carvana's own label.
@@ -364,6 +416,9 @@ def _scrape_listing_drivetrains(enriched: list[dict], num_vehicles: int) -> None
     Uses the same per-model cap as the email table (5 for multi-vehicle profiles,
     15 for single-vehicle) so every listing the reader sees gets an accurate value.
     NHTSA data on non-table listings is unaffected.
+
+    Accepts the already-open scrape browser so Carvana's bot detection does not
+    flag the requests — the session is already trusted from Phase 1 scraping.
     """
     table_limit = 5 if num_vehicles > 1 else 15
 
@@ -384,25 +439,27 @@ def _scrape_listing_drivetrains(enriched: list[dict], num_vehicles: int) -> None
     log.info("Scraping Carvana listing pages for drivetrain: %d listing(s)", len(to_scrape))
     updated = 0
 
-    with Browser() as detail_browser:
-        for r in to_scrape:
-            url = r.get("url", "")
-            drivetrain = fetch_listing_drivetrain(url, detail_browser)
-            if drivetrain:
-                old = r.get("drivetrain")
-                if old != drivetrain:
-                    log.info(
-                        "Drivetrain updated — %s %s %s %s: %s → %s",
-                        r.get("year"), r.get("make"), r.get("model"),
-                        (r.get("trim") or "")[:24], old or "None", drivetrain,
-                    )
-                r["drivetrain"] = drivetrain
-                updated += 1
-            else:
-                log.debug(
-                    "No drivetrain found on listing page: %s %s %s",
+    # Reset context once so we share session state but start a clean page
+    browser.reset_context()
+
+    for r in to_scrape:
+        url = r.get("url", "")
+        drivetrain = fetch_listing_drivetrain(url, browser)
+        if drivetrain:
+            old = r.get("drivetrain")
+            if old != drivetrain:
+                log.info(
+                    "Drivetrain updated — %s %s %s %s: %s → %s",
                     r.get("year"), r.get("make"), r.get("model"),
+                    (r.get("trim") or "")[:24], old or "None", drivetrain,
                 )
+            r["drivetrain"] = drivetrain
+            updated += 1
+        else:
+            log.debug(
+                "No drivetrain found on listing page: %s %s %s",
+                r.get("year"), r.get("make"), r.get("model"),
+            )
 
     log.info(
         "Listing page drivetrain scrape complete: %d/%d resolved",
@@ -758,58 +815,63 @@ def _log_run_footer(
 # ── --check-setup ─────────────────────────────────────────────────────────────
 
 def check_setup() -> None:
+    """CLI-facing setup check: delegates to setup_checks.run_setup_checks() and
+    pretty-prints the structured results for console output."""
     print("\n=== Carvana Tracker — Setup Check ===\n")
 
-    try:
-        profiles = load_profiles("profiles.yaml")
-        print(f"  Profiles:      {len(profiles)} loaded")
-        for p in profiles:
-            print(f"    [{p.profile_id}] {p.label} — "
-                  f"{len(p.vehicles)} vehicle(s), "
-                  f"{'$' + f'{p.max_price:,}' if p.max_price is not None else 'no'} max, "
-                  f"{len(p.email_to)} recipient(s)")
-    except Exception as exc:
-        print(f"  [!!] profiles.yaml error: {exc}")
+    from dashboard.backend.setup_checks import run_setup_checks
+    results = run_setup_checks()
+
+    # ── Profiles ──────────────────────────────────────────────────────────────
+    prof = results.get("profiles", {})
+    if prof.get("status") == "ok":
+        # Re-load profiles here so we can print per-profile details in the CLI.
+        try:
+            profiles = load_profiles("profiles.yaml")
+            print(f"  Profiles:      {len(profiles)} loaded")
+            for p in profiles:
+                print(f"    [{p.profile_id}] {p.label} — "
+                      f"{len(p.vehicles)} vehicle(s), "
+                      f"{'$' + f'{p.max_price:,}' if p.max_price is not None else 'no'} max, "
+                      f"{len(p.email_to)} recipient(s)")
+        except Exception as exc:
+            print(f"  [!!] profiles.yaml error: {exc}")
+    else:
+        print(f"  [!!] profiles.yaml error: {prof.get('detail', 'unknown error')}")
     print(f"  Output dir:    {config.OUTPUT_DIR}")
     print()
 
-    from analysis.ollama_client import OllamaClient
-    if config.OLLAMA_NETWORK_BASE_URL:
-        ollama = OllamaClient(config.OLLAMA_NETWORK_BASE_URL, timeout=5)
-        loaded = ollama.get_loaded_model()
-        if loaded:
-            print(f"  [OK] Ollama: reachable at {config.OLLAMA_NETWORK_HOST}, loaded model: {loaded}")
-        elif ollama.is_available():
-            print(f"  [--] Ollama: reachable at {config.OLLAMA_NETWORK_HOST} but no model loaded (will fall back to Anthropic)")
-        else:
-            print(f"  [--] Ollama: NOT reachable at {config.OLLAMA_NETWORK_HOST}")
+    # ── Ollama ────────────────────────────────────────────────────────────────
+    oll = results.get("ollama", {})
+    status = oll.get("status")
+    if status == "ok":
+        print(f"  [OK] Ollama: reachable at {oll['host']}, loaded model: {oll['loaded_model']}")
+    elif status == "warning":
+        print(f"  [--] Ollama: reachable at {oll['host']} but no model loaded (will fall back to Anthropic)")
+    elif status == "error":
+        print(f"  [--] Ollama: NOT reachable at {oll['host']}")
     else:
         print("  [--] Ollama: OLLAMA_NETWORK_HOST not set in .env")
 
-    from analysis.anthropic_client import AnthropicClient, AnthropicUnavailableError
-    anthropic = AnthropicClient(config.ANTHROPIC_API_KEY, config.ANTHROPIC_MODEL, max_tokens=10)
-    if not anthropic.is_configured():
-        print("  [--] Anthropic API: key not set (ANTHROPIC_API_KEY in .env)")
+    # ── Anthropic ─────────────────────────────────────────────────────────────
+    ant = results.get("anthropic", {})
+    status = ant.get("status")
+    if status == "ok":
+        print(f"  [OK] Anthropic API: key valid, model '{ant['model']}' reachable")
+    elif status == "error":
+        print(f"  [!!] Anthropic API: key present but request failed -- {ant.get('detail', '')}")
     else:
-        try:
-            anthropic.analyze("Reply with only the word OK.")
-            print(f"  [OK] Anthropic API: key valid, model '{config.ANTHROPIC_MODEL}' reachable")
-        except AnthropicUnavailableError as exc:
-            print(f"  [!!] Anthropic API: key present but request failed -- {exc}")
+        print("  [--] Anthropic API: key not set (ANTHROPIC_API_KEY in .env)")
 
-    gmail_ready = bool(
-        config.GMAIL_CLIENT_ID
-        and config.GMAIL_CLIENT_SECRET
-        and config.GMAIL_REFRESH_TOKEN
-        and config.GMAIL_SENDER
-    )
-    if gmail_ready:
-        print(f"  [OK] Gmail API: configured (sender: {config.GMAIL_SENDER})")
+    # ── Gmail ─────────────────────────────────────────────────────────────────
+    gml = results.get("gmail", {})
+    if gml.get("status") == "ok":
+        print(f"  [OK] Gmail API: configured (sender: {gml['sender']})")
     else:
         print("  [--] Gmail API: not configured (run  python setup_gmail_oauth.py)")
 
     if config.SEND_EMAIL:
-        if gmail_ready:
+        if gml.get("status") == "ok":
             print("  [OK] Email: enabled (recipients set per-profile in profiles.yaml)")
         else:
             print("  [!!] Email: SEND_EMAIL=True but Gmail OAuth not configured")
@@ -970,6 +1032,14 @@ def main() -> None:
     parser.add_argument("--check-setup",    action="store_true", help="Validate config and test backends")
     parser.add_argument("--debug",          action="store_true", help="Show DEBUG messages on console")
     parser.add_argument("--backfill-stats", action="store_true", help="Recompute price trend stats from existing DB listings and exit")
+    parser.add_argument(
+        "--profile", nargs="+", metavar="PROFILE_ID",
+        help="Run only the specified profile IDs (default: all profiles)",
+    )
+    parser.add_argument(
+        "--preview-output", metavar="PATH",
+        help="Write the generated email HTML to PATH instead of sending (implies --dry-run behaviour: no save, no send)",
+    )
     args = parser.parse_args()
 
     setup_logging(config.LOG_FILE, console_debug=args.debug)
@@ -997,6 +1067,12 @@ def main() -> None:
         log.error("Failed to load profiles: %s", exc)
         sys.exit(1)
 
+    if args.profile:
+        profiles = [p for p in profiles if p.profile_id in args.profile]
+        if not profiles:
+            log.error("No matching profiles for: %s", args.profile)
+            sys.exit(1)
+
     kwargs = dict(
         profiles=profiles,
         skip_llm=args.no_llm,
@@ -1004,6 +1080,7 @@ def main() -> None:
         dry_run=args.dry_run,
         force_email=args.email,
         no_email=args.no_email,
+        preview_output=args.preview_output,
     )
 
     if args.schedule:

@@ -1,0 +1,29 @@
+{
+  "zip_code": "85286",
+  "down_payment": 3000,
+  "interest_rate": 7.5,
+  "loan_term_months": 60,
+  "check_interval_hours": 24,
+  "max_pages_per_search": 5,
+  "send_email": true,
+  "headless": true,
+  "request_delay_seconds": 4,
+  "page_timeout_seconds": 30,
+  "ollama_enabled": false,
+  "ollama_timeout": 600,
+  "ollama_ref_doc_max_chars": 6000,
+  "ollama_preferred_models": [
+    "qwen3.5:9b",
+    "deepseek-r1:latest",
+    "gemma4:e4b",
+    "qwen3.5:4b",
+    "gemma4:e2b"
+  ],
+  "anthropic_enabled": true,
+  "anthropic_model": "claude-haiku-4-5-20251001",
+  "anthropic_max_tokens": 1500,
+  "output_dir": "./carvana_results",
+  "vehicle_reference_dir": "./vehicle_reference",
+  "db_path": "./carvana_results/history.db",
+  "log_file": "./carvana_results/tracker.log"
+}
