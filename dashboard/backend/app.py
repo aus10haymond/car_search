@@ -9,6 +9,7 @@ Prod (after npm run build):
     (React dist/ is served as static files from the same process)
 """
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -19,9 +20,18 @@ from dashboard.backend.routers import (
     history,
     profiles,
     runs,
+    schedule,
     settings,
     setup,
 )
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    from dashboard.backend import app_scheduler
+    await app_scheduler.startup()
+    yield
+    await app_scheduler.shutdown()
 
 _FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
@@ -31,6 +41,7 @@ def create_app() -> FastAPI:
         title="Autospy Dashboard",
         description="Admin dashboard API for Autospy.",
         version="0.1.0",
+        lifespan=_lifespan,
         # Move built-in Swagger UI away from /docs so the vehicle reference
         # docs router can use that prefix as specified in the plan.
         docs_url="/api-docs",
@@ -60,6 +71,7 @@ def create_app() -> FastAPI:
     application.include_router(profiles.router)
     application.include_router(runs.router)
     application.include_router(history.router)
+    application.include_router(schedule.router)
     application.include_router(setup.router)
     application.include_router(settings.router)
     application.include_router(docs.router)

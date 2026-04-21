@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Routes, Route, Navigate } from 'react-router-dom'
 import { api } from './api/client'
-import type { SetupStatus } from './api/client'
+import type { SetupStatus, ScheduleStatus } from './api/client'
 import { useTheme } from './hooks/useTheme'
 import { StatusDot } from './components/StatusDot'
 import { RunView }      from './views/RunView'
 import { ProfilesView } from './views/ProfilesView'
+import { ScheduleView } from './views/ScheduleView'
 import { HistoryView }  from './views/HistoryView'
 import { DocsView }     from './views/DocsView'
 import { SetupView }    from './views/SetupView'
@@ -13,6 +14,7 @@ import { SettingsView } from './views/SettingsView'
 
 const NAV = [
   { to: '/run',      label: 'Run' },
+  { to: '/schedule', label: 'Schedule' },
   { to: '/profiles', label: 'Profiles' },
   { to: '/history',  label: 'History' },
   { to: '/docs',     label: 'Docs' },
@@ -22,16 +24,18 @@ const NAV = [
 
 export default function App() {
   useTheme() // initialises theme class on <html> and reacts to OS changes
-  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
-  const [lastRun, setLastRun]         = useState<string | null>(null)
-  const [activeJob, setActiveJob]     = useState(false)
+  const [setupStatus, setSetupStatus]     = useState<SetupStatus | null>(null)
+  const [scheduleStatus, setScheduleStatus] = useState<ScheduleStatus | null>(null)
+  const [lastRun, setLastRun]             = useState<string | null>(null)
+  const [activeJob, setActiveJob]         = useState(false)
 
-  // Poll setup status every 30s for status bar dots
+  // Poll setup + schedule status every 30s for status bar
   useEffect(() => {
     const poll = async () => {
       try {
-        const s = await api.setup.status()
+        const [s, sched] = await Promise.all([api.setup.status(), api.schedule.get()])
         setSetupStatus(s)
+        setScheduleStatus(sched)
       } catch { /* backend may not be up yet */ }
     }
     poll()
@@ -98,6 +102,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/run" replace />} />
             <Route path="/run"      element={<RunView onActiveJobChange={setActiveJob} />} />
+            <Route path="/schedule" element={<ScheduleView />} />
             <Route path="/profiles" element={<ProfilesView />} />
             <Route path="/history"  element={<HistoryView />} />
             <Route path="/docs"     element={<DocsView />} />
@@ -115,6 +120,13 @@ export default function App() {
             </span>
           ) : (
             <span>Last run: {lastRun ?? '—'}</span>
+          )}
+
+          {scheduleStatus?.enabled && scheduleStatus.next_run_at && !activeJob && (
+            <span className="flex items-center gap-1.5 text-green-600">
+              <span className="w-2 h-2 rounded-full bg-green-500" />
+              Next: {new Date(scheduleStatus.next_run_at).toLocaleString()}
+            </span>
           )}
 
           {setupStatus && (

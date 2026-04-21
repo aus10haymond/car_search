@@ -85,6 +85,24 @@ export interface DocFile {
   matched_profiles: string[]
 }
 
+export interface ScheduleStatus {
+  enabled:        boolean
+  interval_hours: number
+  profile_ids:    string[]
+  next_run_at:    string | null
+  last_run_at:    string | null
+  last_job_id:    string | null
+  last_status:    string | null
+  running_job:    { job_id: string; status: string; started_at: string } | null
+  task_alive:     boolean
+}
+
+export interface ScheduleRequest {
+  enabled:        boolean
+  interval_hours: number
+  profile_ids:    string[]
+}
+
 export interface ResendResult {
   profile_id:    string
   profile_label: string
@@ -149,6 +167,11 @@ export const api = {
     cancel:       (jobId: string)               => request<{ job_id: string; status: string }>(`/runs/${jobId}`, { method: 'DELETE' }),
     streamUrl:    (jobId: string)               => `${API_BASE}/runs/${jobId}/stream`,
     resendEmail:  (profile_ids: string[])       => request<ResendResponse>('/runs/resend-email', { method: 'POST', body: JSON.stringify({ profile_ids }) }),
+  },
+
+  schedule: {
+    get:    ()                       => request<ScheduleStatus>('/schedule'),
+    update: (req: ScheduleRequest)   => request<ScheduleStatus>('/schedule', { method: 'POST', body: JSON.stringify(req) }),
   },
 
   history: {
