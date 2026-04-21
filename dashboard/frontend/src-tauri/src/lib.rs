@@ -1,16 +1,15 @@
 use std::path::PathBuf;
+use std::process::{Child, Command};
 use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WindowEvent};
-use tauri_plugin_shell::ShellExt;
 
 // ── Project root (compile-time constant) ──────────────────────────────────────
 //
 // CARGO_MANIFEST_DIR is the absolute path of src-tauri/ at compile time.
 // Walking up three parents gives: src-tauri → frontend → dashboard → project root.
-// For this personal tool the project always lives at this path on the same machine.
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent() // frontend/
@@ -23,12 +22,12 @@ fn project_root() -> PathBuf {
 }
 
 // ── Shared state: holds the backend child process ────────────────────────────
-struct BackendProcess(Mutex<Option<tauri_plugin_shell::process::CommandChild>>);
+struct BackendProcess(Mutex<Option<Child>>);
 
 fn kill_backend(app: &AppHandle) {
     if let Some(state) = app.try_state::<BackendProcess>() {
         if let Ok(mut guard) = state.0.lock() {
-            if let Some(child) = guard.take() {
+            if let Some(mut child) = guard.take() {
                 let _ = child.kill();
             }
         }
@@ -39,7 +38,6 @@ fn kill_backend(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
@@ -51,20 +49,26 @@ pub fn run() {
             let root = project_root();
             log::info!("Project root: {}", root.display());
 
-            let result = app
-                .shell()
-                .command("python")
-                .args([
-                    "-m", "uvicorn",
-                    "dashboard.backend.app:app",
-                    "--host", "127.0.0.1",
-                    "--port", "8000",
-                ])
-                .current_dir(&root)
-                .spawn();
+            let mut cmd = Command::new("python");
+            cmd.args([
+                "-m", "uvicorn",
+                "dashboard.backend.app:app",
+                "--host", "127.0.0.1",
+                "--port", "8000",
+            ])
+            .current_dir(&root);
 
-            match result {
-                Ok((_rx, child)) => {
+            // On Windows, suppress the console window that would otherwise
+            // pop up behind the Tauri window whenever the app launches.
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+
+            match cmd.spawn() {
+                Ok(child) => {
                     *app.state::<BackendProcess>().0.lock().unwrap() = Some(child);
                     log::info!("Backend started on http://127.0.0.1:8000");
                 }
@@ -84,7 +88,6 @@ pub fn run() {
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .tooltip("Carvana Tracker")
-                // Menu item clicks
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show_window(app),
                     "quit" => {
@@ -93,7 +96,6 @@ pub fn run() {
                     }
                     _ => {}
                 })
-                // Left-click on tray icon → show window
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
