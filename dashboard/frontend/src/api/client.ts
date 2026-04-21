@@ -87,10 +87,28 @@ export interface DocFile {
 
 export type Settings = Record<string, unknown>
 
+// ── Base URL detection ────────────────────────────────────────────────────────
+//
+// In a normal browser (dev Vite proxy or production served from :8000), relative
+// paths work fine.  Inside the Tauri webview the origin is tauri://localhost or
+// http://tauri.localhost (WebView2 on Windows), so relative paths resolve against
+// the webview's custom protocol — not the FastAPI backend.  Detect and fix.
+
+function getApiBase(): string {
+  if (typeof window === 'undefined') return ''
+  const { protocol, hostname } = window.location
+  if (protocol === 'tauri:' || hostname === 'tauri.localhost') {
+    return 'http://127.0.0.1:8000'
+  }
+  return ''
+}
+
+export const API_BASE = getApiBase()
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(API_BASE + path, {
     headers: { 'Content-Type': 'application/json', ...init?.headers },
     ...init,
   })
@@ -118,7 +136,7 @@ export const api = {
     status:       (jobId: string)       => request<JobStatus>(`/runs/${jobId}/status`),
     emailPreview: (jobId: string)       => request<{ html: string }>(`/runs/${jobId}/email-preview`),
     cancel:       (jobId: string)       => request<{ job_id: string; status: string }>(`/runs/${jobId}`, { method: 'DELETE' }),
-    streamUrl:    (jobId: string)       => `/runs/${jobId}/stream`,
+    streamUrl:    (jobId: string)       => `${API_BASE}/runs/${jobId}/stream`,
   },
 
   history: {

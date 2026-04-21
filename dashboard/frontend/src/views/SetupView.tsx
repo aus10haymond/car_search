@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../api/client'
+import { api, API_BASE } from '../api/client'
 import type { SetupStatus } from '../api/client'
 import { StatusDot } from '../components/StatusDot'
 
@@ -50,7 +50,7 @@ function ActionCard({ name, info }: ActionCardProps) {
     setRunning(true)
     setDone(false)
     try {
-      const resp = await fetch(endpoint, { method: 'POST' })
+      const resp = await fetch(API_BASE + endpoint, { method: 'POST' })
       if (!resp.body) throw new Error('No response body')
       const reader = resp.body.getReader()
       const decoder = new TextDecoder()

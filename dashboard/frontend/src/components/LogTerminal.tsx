@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { LogEvent } from '../api/client'
+import { api } from '../api/client'
 
 interface Props {
   jobId: string | null
@@ -29,7 +30,7 @@ export function LogTerminal({ jobId, onDone }: Props) {
   // SSE connection
   useEffect(() => {
     if (!jobId) return
-    const es = new EventSource(`/runs/${jobId}/stream`)
+    const es = new EventSource(api.runs.streamUrl(jobId))
 
     es.onmessage = (e) => {
       const event: LogEvent = JSON.parse(e.data)

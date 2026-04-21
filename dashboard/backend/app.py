@@ -47,6 +47,9 @@ def create_app() -> FastAPI:
             "http://127.0.0.1:5173",
             "http://localhost:8000",
             "http://127.0.0.1:8000",
+            # Tauri v2 webview origins (WebView2 on Windows / WKWebView on macOS)
+            "http://tauri.localhost",
+            "tauri://localhost",
         ],
         allow_credentials=True,
         allow_methods=["*"],
