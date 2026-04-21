@@ -66,8 +66,21 @@ CREATE TABLE IF NOT EXISTS listings (
     monthly_estimated REAL,
     value_score       REAL,
     is_hybrid         INTEGER,
+    drivetrain        TEXT,
+    color_exterior    TEXT,
+    shipping          REAL,
     url               TEXT,
     UNIQUE(run_id, vin, profile_id)
+);
+
+CREATE TABLE IF NOT EXISTS profile_llm_analysis (
+    profile_id    TEXT PRIMARY KEY,
+    run_id        TEXT NOT NULL,
+    run_at        TEXT NOT NULL,
+    analysis      TEXT,
+    backend_used  TEXT,
+    model_used    TEXT,
+    top_pick_vins TEXT
 );
 
 CREATE TABLE IF NOT EXISTS price_history (
@@ -95,17 +108,17 @@ def init_db() -> None:
     with _connect() as conn:
         conn.executescript(_DDL)
         _migrate_listings_profile_id(conn)
-        _migrate_drop_shipping(conn)
+        _migrate_add_listing_extra_fields(conn)
     log.debug("Database initialised at %s", config.DB_PATH)
 
 
-def _migrate_drop_shipping(conn: sqlite3.Connection) -> None:
-    """Drop the shipping column from listings if it still exists."""
+def _migrate_add_listing_extra_fields(conn: sqlite3.Connection) -> None:
+    """Add drivetrain, color_exterior, and shipping columns to listings if absent."""
     cols = {row[1] for row in conn.execute("PRAGMA table_info(listings)").fetchall()}
-    if "shipping" not in cols:
-        return
-    log.info("Migrating listings table: dropping shipping column")
-    conn.execute("ALTER TABLE listings DROP COLUMN shipping")
+    for col, coltype in [("drivetrain", "TEXT"), ("color_exterior", "TEXT"), ("shipping", "REAL")]:
+        if col not in cols:
+            conn.execute(f"ALTER TABLE listings ADD COLUMN {col} {coltype}")
+            log.info("Migration: added '%s' column to listings table", col)
 
 
 def _migrate_listings_profile_id(conn: sqlite3.Connection) -> None:
@@ -197,6 +210,9 @@ def save_listings(listings: list[dict], run_id: str, profile_id: str = "default"
             listing.get("monthly_estimated"),
             listing.get("value_score"),
             int(bool(listing.get("is_hybrid", False))),
+            listing.get("drivetrain") or None,
+            listing.get("color_exterior") or None,
+            listing.get("shipping"),
             listing.get("url", ""),
         ))
         if vin and listing.get("price"):
@@ -206,8 +222,8 @@ def save_listings(listings: list[dict], run_id: str, profile_id: str = "default"
         conn.executemany(
             """INSERT OR IGNORE INTO listings
                (run_id, profile_id, vin, scraped_at, year, make, model, trim, price, mileage,
-                monthly_estimated, value_score, is_hybrid, url)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                monthly_estimated, value_score, is_hybrid, drivetrain, color_exterior, shipping, url)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             listing_rows,
         )
         if price_rows:
@@ -414,6 +430,71 @@ def get_model_price_trends(
             "min":     row["min_price"],
         })
     return trends
+
+
+def save_profile_llm_analysis(profile_id: str, run_id: str, run_at: str, llm_result) -> None:
+    """
+    Upsert the LLM analysis for a profile.  Only the most recent analysis is
+    kept — each successful run overwrites the previous one.
+    """
+    import json as _json
+    top_vins_json = _json.dumps(llm_result.top_pick_vins or [])
+    with _connect() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO profile_llm_analysis
+               (profile_id, run_id, run_at, analysis, backend_used, model_used, top_pick_vins)
+               VALUES (?,?,?,?,?,?,?)""",
+            (profile_id, run_id, run_at,
+             llm_result.analysis,
+             llm_result.backend_used,
+             llm_result.model_used,
+             top_vins_json),
+        )
+    log.debug("LLM analysis saved for profile '%s' (run %s)", profile_id, run_id)
+
+
+def get_profile_llm_analysis(profile_id: str) -> dict | None:
+    """Return the stored LLM analysis for a profile, or None if none exists."""
+    import json as _json
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM profile_llm_analysis WHERE profile_id = ?",
+            (profile_id,),
+        ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d["top_pick_vins"] = _json.loads(d.get("top_pick_vins") or "[]")
+    except Exception:
+        d["top_pick_vins"] = []
+    return d
+
+
+def get_last_run_id_for_profile(profile_id: str) -> str | None:
+    """Return the run_id of the most recent run that has listings for this profile."""
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT l.run_id FROM listings l
+               JOIN runs r ON l.run_id = r.run_id
+               WHERE l.profile_id = ?
+               ORDER BY r.run_at DESC
+               LIMIT 1""",
+            (profile_id,),
+        ).fetchone()
+    return row["run_id"] if row else None
+
+
+def get_listings_for_run(run_id: str, profile_id: str) -> list[dict]:
+    """Return all listings stored for a specific (run_id, profile_id) pair, sorted by value_score."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT * FROM listings
+               WHERE run_id = ? AND profile_id = ?
+               ORDER BY value_score DESC""",
+            (run_id, profile_id),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_history_summary() -> list[dict]:

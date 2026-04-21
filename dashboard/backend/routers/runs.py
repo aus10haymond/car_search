@@ -1,5 +1,6 @@
 """
-Runs router — job creation, SSE log streaming, status, email preview, cancel.
+Runs router — job creation, SSE log streaming, status, email preview, cancel,
+and resend-last-email.
 """
 
 import json
@@ -18,6 +19,8 @@ from dashboard.backend.job_manager import (
     cancel_job,
     iter_logs,
 )
+
+_PROFILES_YAML = Path(__file__).parent.parent.parent.parent / "profiles.yaml"
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -123,6 +126,113 @@ def email_preview(job_id: str):
             "the email build phase — check the job logs.",
         )
     return {"html": path.read_text(encoding="utf-8")}
+
+
+class ResendRequest(BaseModel):
+    profile_ids: list[str] = []  # empty = all profiles
+
+
+@router.post("/resend-email")
+def resend_last_email(req: ResendRequest):
+    """
+    Rebuild and resend the email from the most recently stored run for each
+    requested profile. No scraping or LLM analysis is performed — uses the
+    listings saved in the database from the last run.
+    """
+    from profiles import load_profiles
+    from storage import history_db
+    from analysis.llm import LLMResult
+    from notifications.email_alert import build_email_html, send_summary
+
+    try:
+        all_profiles = load_profiles(str(_PROFILES_YAML))
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to load profiles: {exc}")
+
+    profiles = (
+        [p for p in all_profiles if p.profile_id in req.profile_ids]
+        if req.profile_ids else all_profiles
+    )
+    if not profiles:
+        raise HTTPException(404, "No matching profiles found")
+
+    history_db.init_db()
+    results = []
+
+    for profile in profiles:
+        run_id = history_db.get_last_run_id_for_profile(profile.profile_id)
+        if not run_id:
+            results.append({
+                "profile_id":    profile.profile_id,
+                "profile_label": profile.label,
+                "sent":          False,
+                "error":         "No previous run found for this profile",
+            })
+            continue
+
+        listings = history_db.get_listings_for_run(run_id, profile.profile_id)
+        if not listings:
+            results.append({
+                "profile_id":    profile.profile_id,
+                "profile_label": profile.label,
+                "sent":          False,
+                "error":         "No listings stored for the last run",
+            })
+            continue
+
+        # Restore the stored LLM analysis for this profile (if any)
+        stored_llm = history_db.get_profile_llm_analysis(profile.profile_id)
+        if stored_llm:
+            llm_result = LLMResult(
+                analysis=stored_llm["analysis"],
+                backend_used=stored_llm["backend_used"] or "none",
+                model_used=stored_llm["model_used"] or "",
+                tokens_used=None,
+                latency_ms=0,
+                error=None,
+                top_pick_vins=stored_llm["top_pick_vins"],
+            )
+        else:
+            llm_result = LLMResult(
+                analysis=None,
+                backend_used="none",
+                model_used="",
+                tokens_used=None,
+                latency_ms=0,
+                error="no stored analysis",
+            )
+
+        trends = history_db.get_model_price_trends(days=180, vehicles=profile.vehicles)
+
+        email_html = build_email_html(
+            listings, llm_result, [],
+            trends=trends, new_vins=set(),
+            profile_label=profile.label,
+            show_financing=profile.show_financing,
+            down_payment=profile.down_payment,
+            num_vehicles=len(profile.vehicles),
+        )
+
+        sent = send_summary(
+            listings, llm_result, [],
+            trends=trends, csv_path=None, force=True,
+            new_vins=set(),
+            email_to=profile.email_to,
+            profile_label=profile.label,
+            show_financing=profile.show_financing,
+            down_payment=profile.down_payment,
+            num_vehicles=len(profile.vehicles),
+            pre_built_html=email_html,
+        )
+
+        results.append({
+            "profile_id":    profile.profile_id,
+            "profile_label": profile.label,
+            "sent":          sent,
+            "error":         None if sent else "Failed to send — check Gmail OAuth credentials",
+        })
+
+    return {"results": results}
 
 
 @router.delete("/{job_id}")

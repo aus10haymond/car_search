@@ -85,6 +85,17 @@ export interface DocFile {
   matched_profiles: string[]
 }
 
+export interface ResendResult {
+  profile_id:    string
+  profile_label: string
+  sent:          boolean
+  error:         string | null
+}
+
+export interface ResendResponse {
+  results: ResendResult[]
+}
+
 export type Settings = Record<string, unknown>
 
 // ── Base URL detection ────────────────────────────────────────────────────────
@@ -132,11 +143,12 @@ export const api = {
   },
 
   runs: {
-    start:        (req: RunRequest)     => request<{ job_id: string }>('/runs', { method: 'POST', body: JSON.stringify(req) }),
-    status:       (jobId: string)       => request<JobStatus>(`/runs/${jobId}/status`),
-    emailPreview: (jobId: string)       => request<{ html: string }>(`/runs/${jobId}/email-preview`),
-    cancel:       (jobId: string)       => request<{ job_id: string; status: string }>(`/runs/${jobId}`, { method: 'DELETE' }),
-    streamUrl:    (jobId: string)       => `${API_BASE}/runs/${jobId}/stream`,
+    start:        (req: RunRequest)              => request<{ job_id: string }>('/runs', { method: 'POST', body: JSON.stringify(req) }),
+    status:       (jobId: string)               => request<JobStatus>(`/runs/${jobId}/status`),
+    emailPreview: (jobId: string)               => request<{ html: string }>(`/runs/${jobId}/email-preview`),
+    cancel:       (jobId: string)               => request<{ job_id: string; status: string }>(`/runs/${jobId}`, { method: 'DELETE' }),
+    streamUrl:    (jobId: string)               => `${API_BASE}/runs/${jobId}/stream`,
+    resendEmail:  (profile_ids: string[])       => request<ResendResponse>('/runs/resend-email', { method: 'POST', body: JSON.stringify({ profile_ids }) }),
   },
 
   history: {

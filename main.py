@@ -244,6 +244,7 @@ def _run_profile(
         ))
         history_db.save_listings(enriched, run_id, profile.profile_id)
         history_db.save_model_stats(enriched, run_id)
+        history_db.save_profile_llm_analysis(profile.profile_id, run_id, run_at, llm_result)
         log.info("Saved %d listings to DB (run_id=%s, profile=%s)",
                  len(enriched), run_id, profile.profile_id)
 

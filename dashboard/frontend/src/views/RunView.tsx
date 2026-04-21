@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { api } from '../api/client'
-import type { Profile, RunRequest } from '../api/client'
+import type { Profile, RunRequest, ResendResult } from '../api/client'
 import { LogTerminal } from '../components/LogTerminal'
 import { EmailPreview } from '../components/EmailPreview'
 
@@ -22,6 +22,8 @@ export function RunView({ onActiveJobChange }: RunViewProps) {
   const [running, setRunning]             = useState(false)
   const [previewHtml, setPreviewHtml]     = useState<string | null>(null)
   const [error, setError]                 = useState<string | null>(null)
+  const [resending, setResending]         = useState(false)
+  const [resendResults, setResendResults] = useState<ResendResult[] | null>(null)
 
   useEffect(() => {
     api.profiles.list().then(setProfiles).catch(console.error)
@@ -71,6 +73,21 @@ export function RunView({ onActiveJobChange }: RunViewProps) {
     if (!jobId) return
     try { await api.runs.cancel(jobId) } catch { /* ignore */ }
     setRunning(false)
+  }
+
+  const resendEmail = async () => {
+    setResendResults(null)
+    setError(null)
+    setResending(true)
+    try {
+      const profileIds = selected.size ? [...selected] : profiles.map(p => p.profile_id)
+      const { results } = await api.runs.resendEmail(profileIds)
+      setResendResults(results)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Resend failed')
+    } finally {
+      setResending(false)
+    }
   }
 
   const allSelected = profiles.length > 0 && selected.size === 0
@@ -160,6 +177,10 @@ export function RunView({ onActiveJobChange }: RunViewProps) {
           className={`${btnBase} bg-white border border-gray-300 text-gray-700 hover:bg-gray-50`}>
           👁 Dry run + preview
         </button>
+        <button onClick={resendEmail} disabled={running || resending}
+          className={`${btnBase} bg-white border border-gray-300 text-gray-700 hover:bg-gray-50`}>
+          {resending ? 'Sending…' : '✉ Resend last email'}
+        </button>
         {running && (
           <button onClick={cancel}
             className={`${btnBase} bg-red-50 border border-red-300 text-red-700 hover:bg-red-100`}>
@@ -170,6 +191,23 @@ export function RunView({ onActiveJobChange }: RunViewProps) {
 
       {error && (
         <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3">{error}</div>
+      )}
+
+      {resendResults && (
+        <div className="rounded-lg border border-gray-200 bg-white divide-y divide-gray-100">
+          <div className="px-4 py-2 text-xs font-medium text-gray-500 uppercase tracking-wide">
+            Resend results
+          </div>
+          {resendResults.map(r => (
+            <div key={r.profile_id} className="flex items-center justify-between px-4 py-3 text-sm">
+              <span className="font-medium text-gray-800">{r.profile_label}</span>
+              {r.sent
+                ? <span className="text-green-700 bg-green-50 border border-green-200 rounded px-2 py-0.5 text-xs">Sent</span>
+                : <span className="text-red-700 text-xs">{r.error ?? 'Failed'}</span>
+              }
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Live log */}
