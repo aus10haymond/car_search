@@ -49,7 +49,16 @@ pub fn run() {
             let root = project_root();
             log::info!("Project root: {}", root.display());
 
-            let mut cmd = Command::new("python");
+            // On Windows use `pythonw.exe` — the windowless variant that ships
+            // with every Python install.  It is a GUI-subsystem executable so
+            // it never opens a console window regardless of how it is launched.
+            // On other platforms fall back to plain `python`.
+            #[cfg(target_os = "windows")]
+            let python = "pythonw";
+            #[cfg(not(target_os = "windows"))]
+            let python = "python";
+
+            let mut cmd = Command::new(python);
             cmd.args([
                 "-m", "uvicorn",
                 "dashboard.backend.app:app",
@@ -58,8 +67,8 @@ pub fn run() {
             ])
             .current_dir(&root);
 
-            // On Windows, suppress the console window that would otherwise
-            // pop up behind the Tauri window whenever the app launches.
+            // Belt-and-suspenders: also set CREATE_NO_WINDOW in case pythonw
+            // is somehow absent and we fall back to a console-subsystem binary.
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;
@@ -87,7 +96,7 @@ pub fn run() {
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
-                .tooltip("Carvana Tracker")
+                .tooltip("Autospy")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show_window(app),
                     "quit" => {

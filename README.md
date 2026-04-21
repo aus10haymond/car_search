@@ -1,4 +1,8 @@
-# Carvana Tracker
+# Autospy
+
+![Autospy icon](autospy_icon_192.png)
+
+App icon is available in SVG and PNG at 32, 64, 96, and 192px.
 
 Scheduled Python tool that scrapes Carvana for used SUVs, scores and filters listings with AI analysis, and sends an HTML email summary with price trend charts.
 
@@ -39,10 +43,10 @@ npx @tauri-apps/cli build --debug
 
 The installer is written to:
 ```
-dashboard/frontend/src-tauri/target/debug/bundle/nsis/Carvana Tracker_0.1.0_x64-setup.exe
+dashboard/frontend/src-tauri/target/debug/bundle/nsis/Autospy_0.1.0_x64-setup.exe
 ```
 
-Run the installer, then launch **Carvana Tracker** from the Start menu or desktop shortcut. The app places an icon in your system tray (bottom-right of the taskbar). From there:
+Run the installer, then launch **Autospy** from the Start menu or desktop shortcut. The app places an icon in your system tray (bottom-right of the taskbar). From there:
 
 - **Double-click** the tray icon (or left-click) to open the dashboard window
 - **Right-click → Open Dashboard** to bring it back if you minimised it
@@ -191,7 +195,7 @@ GMAIL_CLIENT_ID=
 GMAIL_CLIENT_SECRET=
 GMAIL_REFRESH_TOKEN=          # written automatically by setup or the Dashboard Setup page
 
-EMAIL_FROM_NAME=Carvana Tracker
+EMAIL_FROM_NAME=Autospy
 
 # Optional — network Ollama server(s)
 # OLLAMA_NETWORK_HOST=192.168.0.100:11434
@@ -366,7 +370,7 @@ Global settings are stored in `dashboard_settings.json` and editable from the da
 | `page_timeout_seconds` | `30` | Playwright page load timeout |
 | `headless` | `true` | Run Chromium without a visible window |
 | `send_email` | `true` | Send email after each run |
-| `email_from_name` | `Carvana Tracker` | Display name in the From field |
+| `email_from_name` | `Autospy` | Display name in the From field |
 | `ollama_enabled` | `false` | Use Ollama as the primary LLM backend |
 | `ollama_timeout` | `600` | Seconds before an Ollama request times out |
 | `anthropic_model` | `claude-haiku-4-5-20251001` | Anthropic model for LLM analysis |

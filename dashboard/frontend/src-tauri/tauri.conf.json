@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Carvana Tracker",
+  "productName": "Autospy",
   "version": "0.1.0",
-  "identifier": "com.carvanatracker.app",
+  "identifier": "com.autospy.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Carvana Tracker",
+        "title": "Autospy",
         "width": 1280,
         "height": 820,
         "minWidth": 900,

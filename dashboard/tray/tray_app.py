@@ -1,5 +1,5 @@
 """
-Carvana Tracker — system tray helper (Phase 1).
+Autospy — system tray helper (Phase 1).
 
 Starts the FastAPI backend (uvicorn) and places a tray icon in the system
 notification area.  Double-click or select "Open Dashboard" to launch the
@@ -125,9 +125,9 @@ def main() -> None:
 
     global tray
     tray = pystray.Icon(
-        name="carvana_tracker",
+        name="autospy",
         icon=icon_image,
-        title="Carvana Tracker",
+        title="Autospy",
         menu=menu,
     )
 

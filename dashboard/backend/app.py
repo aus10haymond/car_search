@@ -1,5 +1,5 @@
 """
-FastAPI application factory for the Carvana Tracker dashboard backend.
+FastAPI application factory for the Autospy dashboard backend.
 
 Dev:
     uvicorn dashboard.backend.app:app --reload --host 127.0.0.1 --port 8000
@@ -28,8 +28,8 @@ _FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
 def create_app() -> FastAPI:
     application = FastAPI(
-        title="Carvana Tracker Dashboard",
-        description="Admin dashboard API for the Carvana car search tracker.",
+        title="Autospy Dashboard",
+        description="Admin dashboard API for Autospy.",
         version="0.1.0",
         # Move built-in Swagger UI away from /docs so the vehicle reference
         # docs router can use that prefix as specified in the plan.

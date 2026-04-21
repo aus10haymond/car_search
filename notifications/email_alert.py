@@ -84,7 +84,7 @@ def build_email_html(
     price_drops: list[dict],
     trends: dict | None = None,
     new_vins: set[str] | None = None,
-    profile_label: str = "Carvana Tracker",
+    profile_label: str = "Autospy",
     show_financing: bool = True,
     down_payment: int | None = None,
     num_vehicles: int = 1,
@@ -106,7 +106,7 @@ def send_summary(
     force: bool = False,
     new_vins: set[str] | None = None,
     email_to: list[str] | None = None,
-    profile_label: str = "Carvana Tracker",
+    profile_label: str = "Autospy",
     show_financing: bool = True,
     down_payment: int | None = None,
     num_vehicles: int = 1,
@@ -211,7 +211,7 @@ def _is_configured() -> bool:
 def _build_subject(
     listings: list[dict],
     price_drops: list[dict],
-    profile_label: str = "Carvana Tracker",
+    profile_label: str = "Autospy",
 ) -> str:
     n    = len(listings)
     top  = listings[0] if listings else None
@@ -232,7 +232,7 @@ def _build_html(
     price_drops: list[dict],
     trends: dict,
     new_vins: set[str] | None = None,
-    profile_label: str = "Carvana Tracker",
+    profile_label: str = "Autospy",
     show_financing: bool = True,
     down_payment: int | None = None,
     num_vehicles: int = 1,
@@ -471,7 +471,7 @@ def _build_html(
     parts.append(
         f"<hr style='margin-top:32px'>"
         f"<p style='color:#999;font-size:12px'>"
-        f"Carvana Tracker v{_VERSION} | "
+        f"Autospy v{_VERSION} | "
         f"LLM: {llm_result.backend_used} ({llm_result.model_used or 'N/A'})"
         f"{cache_str} | "
         f"Full listing CSV attached"

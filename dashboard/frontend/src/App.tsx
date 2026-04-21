@@ -55,7 +55,7 @@ export default function App() {
       {/* Sidebar */}
       <aside className="w-52 flex-shrink-0 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700 flex flex-col">
         <div className="px-5 py-5 border-b border-gray-100 dark:border-slate-700">
-          <div className="text-base font-semibold text-gray-900">Car Search</div>
+          <div className="text-base font-semibold text-gray-900">Autospy</div>
           <div className="text-xs text-gray-400 mt-0.5">Admin Dashboard</div>
         </div>
 

@@ -63,7 +63,7 @@ ANTHROPIC_MAX_TOKENS: int  = _s["anthropic_max_tokens"]
 # Recipients are configured per-profile in profiles.yaml.
 # Run  python setup_gmail_oauth.py  once to populate the three OAuth values.
 SEND_EMAIL:          bool = _s["send_email"]
-EMAIL_FROM_NAME:     str  = os.getenv("EMAIL_FROM_NAME", "Carvana Tracker")
+EMAIL_FROM_NAME:     str  = os.getenv("EMAIL_FROM_NAME", "Autospy")
 GMAIL_SENDER:        str  = os.getenv("GMAIL_SENDER", "")
 GMAIL_CLIENT_ID:     str  = os.getenv("GMAIL_CLIENT_ID", "")
 GMAIL_CLIENT_SECRET: str  = os.getenv("GMAIL_CLIENT_SECRET", "")

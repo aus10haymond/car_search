@@ -67,7 +67,7 @@ def _update_env(key: str, value: str) -> None:
 
 
 def main() -> None:
-    print("=== Carvana Tracker — Gmail OAuth Setup ===\n")
+    print("=== Autospy — Gmail OAuth Setup ===\n")
     print("Paste your OAuth Client ID and Secret from Google Cloud Console.")
     print("(APIs & Services → Credentials → your Desktop app client)\n")
 
