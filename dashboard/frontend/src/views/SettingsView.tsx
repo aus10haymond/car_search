@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import type { Settings } from '../api/client'
+import { useTheme } from '../hooks/useTheme'
+import type { ThemePreference } from '../hooks/useTheme'
 
 const inputCls = 'block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500'
 
@@ -135,7 +137,14 @@ function FieldInput({
   )
 }
 
+const THEME_OPTIONS: { value: ThemePreference; label: string; icon: string }[] = [
+  { value: 'light',  label: 'Light',  icon: '☀️' },
+  { value: 'dark',   label: 'Dark',   icon: '🌙' },
+  { value: 'system', label: 'System', icon: '💻' },
+]
+
 export function SettingsView() {
+  const { preference, setTheme } = useTheme()
   const [original, setOriginal] = useState<Settings | null>(null)
   const [draft, setDraft]       = useState<Settings | null>(null)
   const [saving, setSaving]     = useState(false)
@@ -217,6 +226,32 @@ export function SettingsView() {
       {!draft && !error && (
         <div className="text-sm text-gray-400 text-center py-8">Loading…</div>
       )}
+
+      {/* Appearance — local preference, not saved to the backend */}
+      <section className="bg-white border border-gray-200 rounded-lg px-5 py-4">
+        <h2 className="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-100">Appearance</h2>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-2">Theme</label>
+          <div className="flex gap-2">
+            {THEME_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setTheme(opt.value)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                  preference === opt.value
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'
+                }`}
+              >
+                <span>{opt.icon}</span>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400 mt-2">Stored locally in the browser — not synced to the server.</p>
+        </div>
+      </section>
 
       {draft && GROUPS.map(group => {
         const visibleKeys = group.keys.filter(k => k in draft)

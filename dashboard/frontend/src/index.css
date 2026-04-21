@@ -7,3 +7,65 @@ html, body, #root {
   margin: 0;
   padding: 0;
 }
+
+/* ── Dark mode overrides ────────────────────────────────────────────────────
+   Applied when <html class="dark"> is set by useTheme().
+   Overrides the Tailwind gray palette used throughout the app.
+   Specificity (.dark .class) beats Tailwind's single-class selectors
+   without needing !important.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Backgrounds */
+.dark .bg-white       { background-color: #1e293b; } /* slate-800  — cards */
+.dark .bg-gray-50     { background-color: #0f172a; } /* slate-900  — page / table headers */
+.dark .bg-gray-100    { background-color: #1e293b; } /* slate-800 */
+
+/* Borders */
+.dark .border-gray-50  { border-color: #1e293b; }
+.dark .border-gray-100 { border-color: #1e293b; } /* slate-800 */
+.dark .border-gray-200 { border-color: #334155; } /* slate-700 */
+.dark .border-gray-300 { border-color: #475569; } /* slate-600 */
+
+/* Text */
+.dark .text-gray-900  { color: #f1f5f9; } /* slate-100 */
+.dark .text-gray-800  { color: #e2e8f0; } /* slate-200 */
+.dark .text-gray-700  { color: #cbd5e1; } /* slate-300 */
+.dark .text-gray-600  { color: #94a3b8; } /* slate-400 */
+.dark .text-gray-500  { color: #64748b; } /* slate-500 */
+.dark .text-gray-400  { color: #475569; } /* slate-600 */
+.dark .text-gray-300  { color: #334155; } /* slate-700 */
+
+/* Hover backgrounds */
+.dark .hover\:bg-gray-50:hover  { background-color: #1e293b; }
+.dark .hover\:bg-gray-100:hover { background-color: #334155; }
+
+/* Table / list dividers */
+.dark .divide-gray-50  > * + * { border-color: #1e293b; }
+.dark .divide-gray-100 > * + * { border-color: #1e293b; }
+
+/* Form inputs — give them a dark bg, light text, and a visible border */
+.dark input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.dark textarea,
+.dark select {
+  background-color: #1e293b;
+  color: #f1f5f9;
+  border-color: #475569;
+}
+.dark input:not([type="checkbox"]):not([type="radio"])::placeholder,
+.dark textarea::placeholder {
+  color: #64748b;
+}
+
+/* Status / alert backgrounds — desaturate to avoid eye-searing blobs */
+.dark .bg-indigo-50   { background-color: rgba(99,  102, 241, 0.15); }
+.dark .text-indigo-700 { color: #a5b4fc; } /* indigo-300 */
+.dark .bg-amber-50    { background-color: rgba(245, 158,  11, 0.15); }
+.dark .text-amber-800  { color: #fcd34d; }
+.dark .bg-red-50      { background-color: rgba(239,  68,  68, 0.15); }
+.dark .text-red-700   { color: #fca5a5; }
+.dark .bg-emerald-50  { background-color: rgba( 16, 185, 129, 0.15); }
+.dark .text-emerald-700 { color: #6ee7b7; }
+
+/* Code snippets */
+.dark code,
+.dark .bg-gray-100.px-1 { background-color: #334155; color: #e2e8f0; }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, Routes, Route, Navigate } from 'react-router-dom'
 import { api } from './api/client'
 import type { SetupStatus } from './api/client'
+import { useTheme } from './hooks/useTheme'
 import { StatusDot } from './components/StatusDot'
 import { RunView }      from './views/RunView'
 import { ProfilesView } from './views/ProfilesView'
@@ -20,6 +21,7 @@ const NAV = [
 ]
 
 export default function App() {
+  useTheme() // initialises theme class on <html> and reacts to OS changes
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
   const [lastRun, setLastRun]         = useState<string | null>(null)
   const [activeJob, setActiveJob]     = useState(false)
@@ -49,10 +51,10 @@ export default function App() {
   }, [activeJob])
 
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
+    <div className="flex h-screen bg-gray-50 dark:bg-slate-950 overflow-hidden">
       {/* Sidebar */}
-      <aside className="w-52 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col">
-        <div className="px-5 py-5 border-b border-gray-100">
+      <aside className="w-52 flex-shrink-0 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700 flex flex-col">
+        <div className="px-5 py-5 border-b border-gray-100 dark:border-slate-700">
           <div className="text-base font-semibold text-gray-900">Car Search</div>
           <div className="text-xs text-gray-400 mt-0.5">Admin Dashboard</div>
         </div>
@@ -77,7 +79,7 @@ export default function App() {
 
         {/* Mini status in sidebar footer */}
         {setupStatus && (
-          <div className="px-4 py-3 border-t border-gray-100 space-y-1">
+          <div className="px-4 py-3 border-t border-gray-100 dark:border-slate-700 space-y-1">
             <div className="flex items-center gap-2 text-xs text-gray-500">
               <StatusDot status={setupStatus.ollama.status} size="sm" />
               Ollama
@@ -105,7 +107,7 @@ export default function App() {
         </main>
 
         {/* Status bar */}
-        <footer className="border-t border-gray-200 bg-white px-5 py-2 flex items-center gap-6 text-xs text-gray-400">
+        <footer className="border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-5 py-2 flex items-center gap-6 text-xs text-gray-400">
           {activeJob ? (
             <span className="flex items-center gap-1.5 text-indigo-600 font-medium">
               <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
