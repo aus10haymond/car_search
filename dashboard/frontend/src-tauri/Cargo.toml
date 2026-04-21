@@ -1,6 +1,6 @@
 [package]
 name = "autospy"
-version = "0.1.0"
+version = "0.2.0"
 description = "Autospy — admin dashboard"
 authors = ["Austen Haymond"]
 license = ""

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Autospy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.autospy.app",
   "build": {
     "frontendDist": "../dist",
@@ -21,10 +21,6 @@
         "fullscreen": false
       }
     ],
-    "trayIcon": {
-      "iconPath": "icons/tray.png",
-      "iconAsTemplate": false
-    },
     "security": {
       "csp": null
     }

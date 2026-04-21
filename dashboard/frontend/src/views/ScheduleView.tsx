@@ -104,6 +104,21 @@ export function ScheduleView() {
   }
 
   if (!draft) {
+    if (error) {
+      return (
+        <div className="space-y-3 max-w-2xl">
+          <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3 flex items-center justify-between">
+            <span>{error}</span>
+            <button
+              onClick={() => { setError(null); loadStatus() }}
+              className="ml-3 text-sm font-medium text-red-700 hover:text-red-900 underline"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )
+    }
     return <div className="text-sm text-gray-400 text-center py-16">Loading…</div>
   }
 

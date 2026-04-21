@@ -137,10 +137,23 @@ export const API_BASE = getApiBase()
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(API_BASE + path, {
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
-    ...init,
-  })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10_000)
+  let res: Response
+  try {
+    res = await fetch(API_BASE + path, {
+      headers: { 'Content-Type': 'application/json', ...init?.headers },
+      signal: controller.signal,
+      ...init,
+    })
+  } catch (err) {
+    clearTimeout(timer)
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('Request timed out — is the backend running?')
+    }
+    throw err
+  }
+  clearTimeout(timer)
   if (!res.ok) {
     const body = await res.text()
     throw new Error(`${res.status} ${res.statusText}: ${body}`)
