@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Routes, Route, Navigate } from 'react-router-dom'
 import { api } from './api/client'
 import type { SetupStatus, ScheduleStatus } from './api/client'
@@ -28,19 +28,32 @@ export default function App() {
   const [scheduleStatus, setScheduleStatus] = useState<ScheduleStatus | null>(null)
   const [lastRun, setLastRun]             = useState<string | null>(null)
   const [activeJob, setActiveJob]         = useState(false)
+  // Incremented once when the backend first responds — remounts all views so
+  // they re-fetch data even if their initial load fired before uvicorn was ready.
+  const [routesKey, setRoutesKey]         = useState(0)
+  const backendReadyRef                   = useRef(false)
 
-  // Poll setup + schedule status every 30s for status bar
+  // Poll setup + schedule status every 30s for status bar.
+  // On startup, also retry every 2s until the backend first responds so that
+  // views always load data even when uvicorn takes a few seconds to start.
   useEffect(() => {
     const poll = async () => {
       try {
         const [s, sched] = await Promise.all([api.setup.status(), api.schedule.get()])
         setSetupStatus(s)
         setScheduleStatus(sched)
+        if (!backendReadyRef.current) {
+          backendReadyRef.current = true
+          setRoutesKey(1) // remount all views so they re-fetch their data
+        }
       } catch { /* backend may not be up yet */ }
     }
     poll()
-    const id = setInterval(poll, 30_000)
-    return () => clearInterval(id)
+    // Fast retry until backend is ready (stops itself once ready)
+    const quickId = setInterval(() => { if (!backendReadyRef.current) poll() }, 2_000)
+    // Ongoing slow poll for status bar updates
+    const slowId  = setInterval(poll, 30_000)
+    return () => { clearInterval(quickId); clearInterval(slowId) }
   }, [])
 
   // Refresh last run time from history whenever a job finishes
@@ -99,7 +112,7 @@ export default function App() {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <main className="flex-1 overflow-y-auto p-6">
-          <Routes>
+          <Routes key={routesKey}>
             <Route path="/" element={<Navigate to="/run" replace />} />
             <Route path="/run"      element={<RunView onActiveJobChange={setActiveJob} />} />
             <Route path="/schedule" element={<ScheduleView />} />
