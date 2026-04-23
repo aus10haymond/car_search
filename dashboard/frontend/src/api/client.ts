@@ -16,6 +16,7 @@ export interface Profile {
   excluded_years: number[]
   show_financing: boolean
   down_payment: number | null
+  email_only_on_new_or_drops: boolean
 }
 
 export interface RunRequest {

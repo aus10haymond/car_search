@@ -38,6 +38,7 @@ class SearchProfile:
     excluded_years:           list[int] = field(default_factory=list)  # specific years to skip within min/max range
     show_financing:           bool = True          # include Est. Payment column in email table
     down_payment:             Optional[int] = None  # override config.DOWN_PAYMENT for this profile
+    email_only_on_new_or_drops: bool = False       # only send email when new vehicles or price drops exist
 
 
 def load_profiles(path: str) -> list[SearchProfile]:
@@ -130,6 +131,7 @@ def load_profiles(path: str) -> list[SearchProfile]:
             excluded_years=excluded_years,
             show_financing=bool(raw.get("show_financing", True)),
             down_payment=int(raw["down_payment"]) if raw.get("down_payment") is not None else None,
+            email_only_on_new_or_drops=bool(raw.get("email_only_on_new_or_drops", False)),
         ))
 
     log.info("Loaded %d profile(s): %s", len(profiles), [p.profile_id for p in profiles])

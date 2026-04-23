@@ -260,8 +260,8 @@ def _run_profile(
 
         if no_email:
             log.info("Email skipped (--no-email)")
-        elif force_email or (config.SEND_EMAIL and should_send(enriched, new_vins, price_drops,
-                                                               max_price=profile.max_price)):
+        elif force_email or (config.SEND_EMAIL and _should_send_for_profile(
+                profile, enriched, new_vins, price_drops)):
             # Build HTML up front so we can validate it before sending
             email_html = build_email_html(
                 enriched, llm_result, price_drops,
@@ -692,6 +692,35 @@ def _merge_llm_results(per_make_results: list[tuple[str, LLMResult]]) -> LLMResu
         cache_hit=any_cache_hit,
         top_pick_vins=final_vins,
     )
+
+
+# ── Email send decision ───────────────────────────────────────────────────────
+
+def _should_send_for_profile(
+    profile: SearchProfile,
+    enriched: list[dict],
+    new_vins: set[str],
+    price_drops: list[dict],
+) -> bool:
+    """
+    Decide whether to send an email for this profile run.
+
+    If email_only_on_new_or_drops is True, only send when there are new vehicles
+    (never seen before) or price drops — ignoring the normal value/price conditions.
+    Otherwise, delegate to the standard should_send() logic.
+    """
+    if profile.email_only_on_new_or_drops:
+        has_new   = bool(new_vins)
+        has_drops = bool(price_drops)
+        if has_new or has_drops:
+            log.info(
+                "email_only_on_new_or_drops: sending (new=%d, drops=%d)",
+                len(new_vins), len(price_drops),
+            )
+            return True
+        log.info("email_only_on_new_or_drops: skipping (no new listings or price drops)")
+        return False
+    return should_send(enriched, new_vins, price_drops, max_price=profile.max_price)
 
 
 # ── Alert flag helper ─────────────────────────────────────────────────────────

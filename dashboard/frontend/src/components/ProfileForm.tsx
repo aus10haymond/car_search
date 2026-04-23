@@ -13,6 +13,7 @@ const EMPTY: Profile = {
   max_mileage: 80000, min_year: 2020, max_year: 2025, email_to: [],
   fuel_type_filters: [null], model_preference: [], reference_doc_path: null,
   excluded_trim_keywords: [], excluded_years: [], show_financing: true, down_payment: null,
+  email_only_on_new_or_drops: false,
 }
 
 // Simple tag-input: Enter/comma adds, click removes
@@ -270,6 +271,15 @@ export function ProfileForm({ initial, docs, onSave, onClose }: Props) {
               </div>
             </Field>
           </div>
+
+          {/* Email alert mode */}
+          <Field label="Email alert mode" hint="When enabled, emails are only sent when new vehicles appear for the first time or an existing vehicle drops in price. Disables the normal value-score / under-budget triggers.">
+            <label className="flex items-center gap-2 text-sm cursor-pointer mt-1">
+              <input type="checkbox" checked={form.email_only_on_new_or_drops}
+                onChange={e => set('email_only_on_new_or_drops', e.target.checked)} />
+              Only email on new listings or price drops
+            </label>
+          </Field>
 
           {/* Reference doc */}
           <Field label="Reference doc" hint='Auto-discover finds matching files in vehicle_reference/. "Manual" lets you pick one.'>

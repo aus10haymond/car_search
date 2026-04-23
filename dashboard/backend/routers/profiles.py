@@ -39,6 +39,7 @@ class ProfileModel(BaseModel):
     excluded_years:         list[int] = Field(default_factory=list)
     show_financing:         bool = True
     down_payment:           int | None = None
+    email_only_on_new_or_drops: bool = False
 
     @model_validator(mode="after")
     def validate_profile(self) -> "ProfileModel":
@@ -96,6 +97,7 @@ def _model_to_raw(p: ProfileModel) -> dict[str, Any]:
         "excluded_years":         p.excluded_years,
         "show_financing":         p.show_financing,
         "down_payment":           p.down_payment,
+        "email_only_on_new_or_drops": p.email_only_on_new_or_drops,
     }
     if p.reference_doc_path:
         d["reference_doc_path"] = p.reference_doc_path
@@ -127,6 +129,7 @@ def _profile_to_model(raw: dict) -> dict:
         "excluded_years":         raw.get("excluded_years") or [],
         "show_financing":         raw.get("show_financing", True),
         "down_payment":           raw.get("down_payment"),
+        "email_only_on_new_or_drops": raw.get("email_only_on_new_or_drops", False),
     }
 
 
