@@ -717,7 +717,7 @@ export default function AdminPage() {
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <img src={`${import.meta.env.BASE_URL}autospy-logo.svg`} alt="Autospy" className="w-7 h-7" />
+            <img src={`${import.meta.env.BASE_URL}autospy-logo.png`} alt="Autospy" className="w-7 h-7" />
             <span className="font-semibold text-gray-900 text-sm">Autospy</span>
             <span className="text-gray-300 text-sm">|</span>
             <span className="text-xs text-gray-500">Admin Portal</span>

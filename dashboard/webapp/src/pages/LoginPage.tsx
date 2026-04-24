@@ -61,7 +61,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo / heading */}
         <div className="text-center mb-8">
-          <img src={`${import.meta.env.BASE_URL}autospy-logo.svg`} alt="Autospy" className="w-12 h-12 mb-4" />
+          <img src={`${import.meta.env.BASE_URL}autospy-logo.png`} alt="Autospy" className="w-12 h-12 mb-4" />
           <h1 className="text-2xl font-bold text-gray-900">Autospy Portal</h1>
           <p className="text-sm text-gray-500 mt-1">
             {mode === 'setup' ? 'Create your admin account to get started' : 'Sign in to your account'}
