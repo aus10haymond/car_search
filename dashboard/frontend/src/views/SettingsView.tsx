@@ -24,16 +24,24 @@ const GROUPS: { title: string; keys: (keyof Settings)[] }[] = [
     keys: ['send_email', 'email_from_name'],
   },
   {
+    title: 'LLM — NVIDIA NIM',
+    keys: ['nvidia_enabled', 'nvidia_model', 'nvidia_max_tokens'],
+  },
+  {
+    title: 'LLM — Cerebras',
+    keys: ['cerebras_enabled', 'cerebras_model', 'cerebras_max_tokens'],
+  },
+  {
+    title: 'LLM — Anthropic',
+    keys: ['anthropic_enabled', 'anthropic_model', 'anthropic_max_tokens'],
+  },
+  {
     title: 'LLM — Ollama',
     keys: ['ollama_enabled', 'ollama_timeout', 'ollama_ref_doc_max_chars', 'ollama_preferred_models'],
   },
   {
-    title: 'LLM — Anthropic',
-    keys: ['anthropic_model', 'anthropic_max_tokens'],
-  },
-  {
     title: 'Secrets',
-    keys: ['ANTHROPIC_API_KEY', 'OLLAMA_NETWORK_HOST', 'OLLAMA_NETWORK_HOST_2', 'GMAIL_SENDER', 'GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET'],
+    keys: ['NVIDIA_API_KEY', 'ANTHROPIC_API_KEY', 'CEREBRAS_API_KEY', 'OLLAMA_NETWORK_HOST', 'OLLAMA_NETWORK_HOST_2', 'GMAIL_SENDER', 'GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET'],
   },
   {
     title: 'Paths',
@@ -41,11 +49,13 @@ const GROUPS: { title: string; keys: (keyof Settings)[] }[] = [
   },
 ]
 
-const SECRET_KEYS = new Set(['ANTHROPIC_API_KEY', 'OLLAMA_NETWORK_HOST', 'OLLAMA_NETWORK_HOST_2', 'GMAIL_SENDER', 'GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET'])
+const SECRET_KEYS = new Set(['NVIDIA_API_KEY', 'ANTHROPIC_API_KEY', 'CEREBRAS_API_KEY', 'OLLAMA_NETWORK_HOST', 'OLLAMA_NETWORK_HOST_2', 'GMAIL_SENDER', 'GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET'])
 
-const BOOL_KEYS = new Set(['headless', 'send_email', 'ollama_enabled'])
+const BOOL_KEYS = new Set(['headless', 'send_email', 'nvidia_enabled', 'cerebras_enabled', 'anthropic_enabled', 'ollama_enabled'])
 const NUM_KEYS  = new Set(['max_pages_per_search', 'request_delay_seconds', 'page_timeout_seconds', 'check_interval_hours',
-  'down_payment', 'interest_rate', 'loan_term_months', 'ollama_timeout', 'ollama_ref_doc_max_chars', 'anthropic_max_tokens'])
+  'down_payment', 'interest_rate', 'loan_term_months',
+  'nvidia_max_tokens', 'cerebras_max_tokens', 'anthropic_max_tokens',
+  'ollama_timeout', 'ollama_ref_doc_max_chars'])
 const LIST_KEYS = new Set(['ollama_preferred_models'])
 
 const LABELS: Partial<Record<keyof Settings, string>> = {
@@ -60,12 +70,19 @@ const LABELS: Partial<Record<keyof Settings, string>> = {
   loan_term_months:        'Loan term (months)',
   send_email:              'Send emails',
   email_from_name:         'From name',
+  nvidia_enabled:          'NVIDIA NIM enabled',
+  nvidia_model:            'NVIDIA model',
+  nvidia_max_tokens:       'Max tokens',
+  cerebras_enabled:        'Cerebras enabled',
+  cerebras_model:          'Cerebras model',
+  cerebras_max_tokens:     'Max tokens',
+  anthropic_enabled:       'Anthropic enabled',
+  anthropic_model:         'Anthropic model',
+  anthropic_max_tokens:    'Max tokens',
   ollama_enabled:          'Ollama enabled',
   ollama_timeout:          'Ollama timeout (seconds)',
   ollama_ref_doc_max_chars:'Ref doc max chars',
   ollama_preferred_models: 'Preferred models (comma-separated)',
-  anthropic_model:         'Anthropic model',
-  anthropic_max_tokens:    'Max tokens',
   output_dir:              'Output directory',
   vehicle_reference_dir:   'Vehicle reference directory',
   db_path:                 'Database path',

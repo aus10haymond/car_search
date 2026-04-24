@@ -15,7 +15,9 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 # Known keys that live in .env, not settings.json.
 # Accepted in PATCH but not stored in the JSON file.
 _ENV_KEYS = {
+    "nvidia_api_key",
     "anthropic_api_key",
+    "cerebras_api_key",
     "ollama_network_host",
     "ollama_network_host_2",
     "gmail_sender",

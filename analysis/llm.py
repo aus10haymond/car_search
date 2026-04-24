@@ -1,7 +1,8 @@
 """
-LLM analysis orchestrator — network Ollama primary, Anthropic API fallback.
+LLM analysis orchestrator — NVIDIA NIM primary, Cerebras secondary,
+Anthropic API tertiary, Ollama fallback.
 
-This is the only module that imports both clients.
+This is the only module that imports all clients.
 """
 
 import logging
@@ -9,6 +10,7 @@ import time
 from dataclasses import dataclass, field
 
 import config
+from analysis.nvidia_client import NvidiaClient, NvidiaUnavailableError
 from analysis.ollama_client import OllamaClient, OllamaUnavailableError, OllamaModelError
 from analysis.anthropic_client import AnthropicClient, AnthropicUnavailableError
 from analysis.cerebras_client import CerebrasClient, CerebrasUnavailableError
@@ -37,19 +39,24 @@ class LLMAnalyzer:
         show_financing: bool = True,
         down_payment: int | None = None,
     ):
-        self.ollama = OllamaClient(
-            base_url=config.OLLAMA_NETWORK_BASE_URL,
-            timeout=config.OLLAMA_TIMEOUT,
+        self.nvidia = NvidiaClient(
+            api_key=config.NVIDIA_API_KEY,
+            model=config.NVIDIA_MODEL,
+            max_tokens=config.NVIDIA_MAX_TOKENS,
+        )
+        self.cerebras = CerebrasClient(
+            api_key=config.CEREBRAS_API_KEY,
+            model=config.CEREBRAS_MODEL,
+            max_tokens=config.CEREBRAS_MAX_TOKENS,
         )
         self.anthropic = AnthropicClient(
             api_key=config.ANTHROPIC_API_KEY,
             model=config.ANTHROPIC_MODEL,
             max_tokens=config.ANTHROPIC_MAX_TOKENS,
         )
-        self.cerebras = CerebrasClient(
-            api_key=config.CEREBRAS_API_KEY,
-            model=config.CEREBRAS_MODEL,
-            max_tokens=config.CEREBRAS_MAX_TOKENS,
+        self.ollama = OllamaClient(
+            base_url=config.OLLAMA_NETWORK_BASE_URL,
+            timeout=config.OLLAMA_TIMEOUT,
         )
         self.backend_used: str | None = None
         self._reference_doc   = reference_doc
@@ -65,20 +72,12 @@ class LLMAnalyzer:
         _prompt_override: str | None = None,
     ) -> LLMResult:
         """
-        1. If OLLAMA_ENABLED and network Ollama has a model loaded:
-               try ollama.analyze(prompt, model=loaded_model)
-               on success: return result with backend_used="ollama"
-               on OllamaUnavailableError or OllamaModelError:
-                   log WARNING, fall through to step 2
-
-        2. If ANTHROPIC_ENABLED and anthropic.is_configured():
-               try anthropic.analyze(prompt)
-               on success: return result with backend_used="anthropic_api"
-               on AnthropicUnavailableError:
-                   log ERROR, fall through to step 3
-
-        3. Neither backend available:
-               return LLMResult with backend_used="none", analysis=None
+        Priority chain (first available wins):
+          1. NVIDIA NIM API   (NVIDIA_ENABLED + api key set)
+          2. Cerebras API     (CEREBRAS_ENABLED + api key set)
+          3. Anthropic API    (ANTHROPIC_ENABLED + api key set)
+          4. Ollama           (OLLAMA_ENABLED + server reachable with a model)
+          5. None             (returns LLMResult with analysis=None)
 
         Never raises. Always returns an LLMResult.
 
@@ -92,61 +91,36 @@ class LLMAnalyzer:
         else:
             prompt = self.build_prompt(listings)
 
-        # ── Step 1: Network Ollama (primary) ──────────────────────────────────
-        if config.OLLAMA_ENABLED and config.OLLAMA_NETWORK_BASE_URL:
-            loaded_model = self.ollama.get_loaded_model()
-            if not loaded_model:
-                loaded_model = self.ollama.get_preferred_model(config.OLLAMA_PREFERRED_MODELS)
-                if loaded_model:
-                    log.info(
-                        "Network Ollama: no model loaded — will load preferred model %s",
-                        loaded_model,
-                    )
-                else:
-                    log.warning(
-                        "Network Ollama: no model loaded and no preferred model installed "
-                        "— falling back to Anthropic API"
-                    )
-
-            if loaded_model:
+        # ── Step 1: NVIDIA NIM (primary) ──────────────────────────────────────
+        if config.NVIDIA_ENABLED:
+            if self.nvidia.is_configured():
                 t0 = time.monotonic()
                 try:
-                    ollama_ref = effective_ref
-                    max_chars  = config.OLLAMA_REF_DOC_MAX_CHARS
-                    if max_chars and ollama_ref and len(ollama_ref) > max_chars:
-                        log.warning(
-                            "Reference doc truncated from %d to %d chars for Ollama "
-                            "(full doc is still sent to Anthropic API)",
-                            len(ollama_ref), max_chars,
-                        )
-                        ollama_ref = ollama_ref[:max_chars]
-                    text = self.ollama.analyze(
-                        prompt, reference_doc=ollama_ref, model=loaded_model
-                    )
+                    text = self.nvidia.analyze(prompt, reference_doc=effective_ref)
                     latency = int((time.monotonic() - t0) * 1000)
                     log.info(
-                        "LLM analysis complete via network Ollama/%s (%dms)",
-                        loaded_model, latency,
+                        "LLM analysis complete via NVIDIA NIM/%s (%dms)",
+                        config.NVIDIA_MODEL, latency,
                     )
-                    self.backend_used = "ollama"
+                    self.backend_used = "nvidia"
                     cleaned_text, top_pick_vins = self._parse_top_picks(text)
                     return LLMResult(
                         analysis=cleaned_text,
-                        backend_used="ollama",
-                        model_used=loaded_model,
+                        backend_used="nvidia",
+                        model_used=config.NVIDIA_MODEL,
                         tokens_used=None,
                         latency_ms=latency,
                         error=None,
                         top_pick_vins=top_pick_vins,
                     )
-                except (OllamaUnavailableError, OllamaModelError) as exc:
-                    log.warning(
-                        "Network Ollama failed: %s — falling back to Anthropic API", exc
+                except NvidiaUnavailableError as exc:
+                    log.error(
+                        "NVIDIA NIM API failed: %s — falling back to Cerebras", exc
                     )
-        elif config.OLLAMA_ENABLED:
-            log.debug("OLLAMA_NETWORK_HOST not set — skipping Ollama")
+            else:
+                log.warning("NVIDIA API key not configured — skipping NVIDIA NIM")
         else:
-            log.debug("Ollama disabled in config")
+            log.debug("NVIDIA NIM disabled in config")
 
         # ── Step 2: Cerebras API ──────────────────────────────────────────────
         if config.CEREBRAS_ENABLED:
@@ -179,7 +153,7 @@ class LLMAnalyzer:
         else:
             log.debug("Cerebras disabled in config")
 
-        # ── Step 3: Anthropic API (fallback) ──────────────────────────────────
+        # ── Step 3: Anthropic API ─────────────────────────────────────────────
         if config.ANTHROPIC_ENABLED:
             if self.anthropic.is_configured():
                 t0 = time.monotonic()
@@ -206,14 +180,66 @@ class LLMAnalyzer:
                     )
                 except AnthropicUnavailableError as exc:
                     log.error(
-                        "Anthropic API failed: %s — no LLM analysis available", exc
+                        "Anthropic API failed: %s — falling back to Ollama", exc
                     )
             else:
-                log.warning("Anthropic API key not configured — no LLM analysis available")
+                log.warning("Anthropic API key not configured — skipping Anthropic")
         else:
             log.debug("Anthropic API disabled in config")
 
-        # ── Step 3: No backend available ──────────────────────────────────────
+        # ── Step 4: Network Ollama (last resort) ──────────────────────────────
+        if config.OLLAMA_ENABLED and config.OLLAMA_NETWORK_BASE_URL:
+            loaded_model = self.ollama.get_loaded_model()
+            if not loaded_model:
+                loaded_model = self.ollama.get_preferred_model(config.OLLAMA_PREFERRED_MODELS)
+                if loaded_model:
+                    log.info(
+                        "Network Ollama: no model loaded — will load preferred model %s",
+                        loaded_model,
+                    )
+                else:
+                    log.warning(
+                        "Network Ollama: no model loaded and no preferred model installed"
+                    )
+
+            if loaded_model:
+                t0 = time.monotonic()
+                try:
+                    ollama_ref = effective_ref
+                    max_chars  = config.OLLAMA_REF_DOC_MAX_CHARS
+                    if max_chars and ollama_ref and len(ollama_ref) > max_chars:
+                        log.warning(
+                            "Reference doc truncated from %d to %d chars for Ollama",
+                            len(ollama_ref), max_chars,
+                        )
+                        ollama_ref = ollama_ref[:max_chars]
+                    text = self.ollama.analyze(
+                        prompt, reference_doc=ollama_ref, model=loaded_model
+                    )
+                    latency = int((time.monotonic() - t0) * 1000)
+                    log.info(
+                        "LLM analysis complete via network Ollama/%s (%dms)",
+                        loaded_model, latency,
+                    )
+                    self.backend_used = "ollama"
+                    cleaned_text, top_pick_vins = self._parse_top_picks(text)
+                    return LLMResult(
+                        analysis=cleaned_text,
+                        backend_used="ollama",
+                        model_used=loaded_model,
+                        tokens_used=None,
+                        latency_ms=latency,
+                        error=None,
+                        top_pick_vins=top_pick_vins,
+                    )
+                except (OllamaUnavailableError, OllamaModelError) as exc:
+                    log.warning("Network Ollama failed: %s", exc)
+        elif config.OLLAMA_ENABLED:
+            log.debug("OLLAMA_NETWORK_HOST not set — skipping Ollama")
+        else:
+            log.debug("Ollama disabled in config")
+
+        # ── Step 5: No backend available ──────────────────────────────────────
         self.backend_used = "none"
         return LLMResult(
             analysis=None,
@@ -221,7 +247,7 @@ class LLMAnalyzer:
             model_used="",
             tokens_used=None,
             latency_ms=0,
-            error="No LLM backend available (Ollama unreachable/no model, Cerebras/Anthropic not configured or disabled)",
+            error="No LLM backend available (NVIDIA/Cerebras/Anthropic not configured or disabled, Ollama unreachable/no model)",
         )
 
     @staticmethod

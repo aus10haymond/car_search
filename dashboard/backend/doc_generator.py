@@ -1,12 +1,13 @@
 """
-Shared vehicle reference doc generation via Cerebras (OpenAI-compatible API).
+Shared vehicle reference doc generation.
+Tries NVIDIA NIM first, falls back to Cerebras.
 Used by both the desktop (/docs/generate) and portal (/portal/docs/generate) routers.
 """
 
 import config
 
+_NVIDIA_BASE_URL   = "https://integrate.api.nvidia.com/v1"
 _CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
-_CEREBRAS_MODEL = "gpt-oss-120b"
 
 
 def _build_prompt(make: str, model_name: str, year_start: int, year_end: int, notes: str) -> str:
@@ -39,18 +40,41 @@ Focus only on the {years} generation. Include hybrid/PHEV variants if they exist
 
 
 def generate_vehicle_doc(make: str, model_name: str, year_start: int, year_end: int, notes: str = "") -> str:
-    """Call Cerebras to generate a vehicle reference markdown doc. Returns the content string."""
-    if not config.CEREBRAS_API_KEY:
-        raise ValueError("CEREBRAS_API_KEY not configured — add it to .env")
+    """
+    Generate a vehicle reference markdown doc. Tries NVIDIA NIM first, Cerebras as fallback.
+    Returns the content string.
+    """
     try:
         from openai import OpenAI
     except ImportError:
         raise RuntimeError("openai package not installed — run: pip install openai")
 
-    client = OpenAI(api_key=config.CEREBRAS_API_KEY, base_url=_CEREBRAS_BASE_URL)
     prompt = _build_prompt(make, model_name, year_start, year_end, notes)
+
+    # ── Primary: NVIDIA NIM ───────────────────────────────────────────────────
+    if config.NVIDIA_API_KEY:
+        try:
+            client = OpenAI(api_key=config.NVIDIA_API_KEY, base_url=_NVIDIA_BASE_URL)
+            response = client.chat.completions.create(
+                model=config.NVIDIA_MODEL,
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.choices[0].message.content
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "NVIDIA NIM doc generation failed: %s — falling back to Cerebras", exc
+            )
+
+    # ── Fallback: Cerebras ────────────────────────────────────────────────────
+    if not config.CEREBRAS_API_KEY:
+        raise ValueError(
+            "NVIDIA_API_KEY and CEREBRAS_API_KEY are both unconfigured — add at least one to .env"
+        )
+    client = OpenAI(api_key=config.CEREBRAS_API_KEY, base_url=_CEREBRAS_BASE_URL)
     response = client.chat.completions.create(
-        model=_CEREBRAS_MODEL,
+        model=config.CEREBRAS_MODEL,
         max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
     )

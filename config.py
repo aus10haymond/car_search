@@ -59,6 +59,12 @@ ANTHROPIC_API_KEY:    str  = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL:      str  = _s["anthropic_model"]
 ANTHROPIC_MAX_TOKENS: int  = _s["anthropic_max_tokens"]
 
+# ── AI analysis & doc generation — NVIDIA NIM ────────────────────────────────
+NVIDIA_API_KEY:    str  = os.getenv("NVIDIA_API_KEY", "")
+NVIDIA_ENABLED:    bool = _s["nvidia_enabled"]
+NVIDIA_MODEL:      str  = _s["nvidia_model"]
+NVIDIA_MAX_TOKENS: int  = _s["nvidia_max_tokens"]
+
 # ── AI analysis & doc generation — Cerebras ──────────────────────────────────
 CEREBRAS_API_KEY:    str  = os.getenv("CEREBRAS_API_KEY", "")
 CEREBRAS_ENABLED:    bool = _s["cerebras_enabled"]

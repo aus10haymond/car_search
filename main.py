@@ -545,18 +545,28 @@ def _run_llm(
         return LLMResult(analysis=None, backend_used="none", model_used="",
                          tokens_used=None, latency_ms=0, error="skipped via --no-llm")
 
+    original_nvidia    = config.NVIDIA_ENABLED
     original_ollama    = config.OLLAMA_ENABLED
     original_anthropic = config.ANTHROPIC_ENABLED
     original_cerebras  = config.CEREBRAS_ENABLED
-    if force_backend == "ollama":
+    if force_backend == "nvidia":
+        config.CEREBRAS_ENABLED  = False
+        config.ANTHROPIC_ENABLED = False
+        config.OLLAMA_ENABLED    = False
+        config.NVIDIA_ENABLED    = True
+        log.info("Backend forced to NVIDIA NIM only")
+    elif force_backend == "ollama":
+        config.NVIDIA_ENABLED    = False
         config.ANTHROPIC_ENABLED = False
         config.CEREBRAS_ENABLED  = False
         log.info("Backend forced to Ollama only")
     elif force_backend == "api":
+        config.NVIDIA_ENABLED   = False
         config.OLLAMA_ENABLED   = False
         config.CEREBRAS_ENABLED = False
         log.info("Backend forced to Anthropic API only")
     elif force_backend == "cerebras":
+        config.NVIDIA_ENABLED    = False
         config.OLLAMA_ENABLED    = False
         config.ANTHROPIC_ENABLED = False
         config.CEREBRAS_ENABLED  = True
@@ -623,6 +633,7 @@ def _run_llm(
 
         return _merge_llm_results(per_make_results)
     finally:
+        config.NVIDIA_ENABLED    = original_nvidia
         config.OLLAMA_ENABLED    = original_ollama
         config.ANTHROPIC_ENABLED = original_anthropic
         config.CEREBRAS_ENABLED  = original_cerebras
@@ -1064,7 +1075,7 @@ def main() -> None:
     parser.add_argument("--schedule",    action="store_true", help="Run on a repeating schedule")
     parser.add_argument("--dry-run",     action="store_true", help="Scrape and analyse but do not save or email")
     parser.add_argument("--no-llm",      action="store_true", help="Skip LLM analysis")
-    parser.add_argument("--backend",     choices=["ollama", "api", "cerebras"], help="Force a specific LLM backend")
+    parser.add_argument("--backend",     choices=["nvidia", "ollama", "api", "cerebras"], help="Force a specific LLM backend")
     parser.add_argument("--email",       action="store_true", help="Force email send this run")
     parser.add_argument("--no-email",    action="store_true", help="Suppress email this run even if SEND_EMAIL=True")
     parser.add_argument("--history",     action="store_true", help="Print run history and exit")

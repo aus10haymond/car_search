@@ -4,7 +4,7 @@ import type { Profile, RunRequest, ResendResult } from '../api/client'
 import { LogTerminal } from '../components/LogTerminal'
 import { EmailPreview } from '../components/EmailPreview'
 
-type Backend = 'auto' | 'ollama' | 'api' | 'cerebras' | 'none'
+type Backend = 'auto' | 'nvidia' | 'ollama' | 'api' | 'cerebras' | 'none'
 
 interface RunViewProps {
   onActiveJobChange?: (active: boolean) => void
@@ -40,7 +40,7 @@ export function RunView({ onActiveJobChange }: RunViewProps) {
       profile_ids: selected.size ? [...selected] : profiles.map(p => p.profile_id),
       dry_run: dryRun,
       no_llm: noLlm || backend === 'none',
-      backend: backend === 'ollama' ? 'ollama' : backend === 'api' ? 'api' : backend === 'cerebras' ? 'cerebras' : null,
+      backend: backend === 'nvidia' ? 'nvidia' : backend === 'ollama' ? 'ollama' : backend === 'api' ? 'api' : backend === 'cerebras' ? 'cerebras' : null,
       force_email: forceEmail,
       no_email: noEmail || dryRun,
       debug,
@@ -137,7 +137,7 @@ export function RunView({ onActiveJobChange }: RunViewProps) {
         <div>
           <label className="block text-xs text-gray-500 mb-1.5">LLM backend</label>
           <div className="flex gap-2 flex-wrap">
-            {(['auto', 'ollama', 'cerebras', 'api', 'none'] as Backend[]).map(b => (
+            {(['auto', 'nvidia', 'cerebras', 'api', 'ollama', 'none'] as Backend[]).map(b => (
               <button key={b} type="button" onClick={() => setBackend(b)}
                 className={`px-3 py-1 rounded-full text-sm border transition-colors ${
                   backend === b
@@ -145,7 +145,7 @@ export function RunView({ onActiveJobChange }: RunViewProps) {
                     : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'
                 }`}
               >
-                {b === 'auto' ? 'Auto (Ollama → Anthropic)' : b === 'none' ? 'No LLM' : b === 'api' ? 'Anthropic' : b === 'cerebras' ? 'Cerebras' : b.toUpperCase()}
+                {b === 'auto' ? 'Auto (NVIDIA → Cerebras → Anthropic → Ollama)' : b === 'none' ? 'No LLM' : b === 'api' ? 'Anthropic' : b === 'cerebras' ? 'Cerebras' : b === 'nvidia' ? 'NVIDIA NIM' : b.toUpperCase()}
               </button>
             ))}
           </div>

@@ -43,8 +43,8 @@ class RunRequest(BaseModel):
 @router.post("")
 async def start_run(req: RunRequest, background_tasks: BackgroundTasks):
     """Create and start a run job. Returns immediately with a job_id."""
-    if req.backend and req.backend not in ("ollama", "api", "cerebras"):
-        raise HTTPException(422, "backend must be 'ollama', 'api', 'cerebras', or null")
+    if req.backend and req.backend not in ("nvidia", "ollama", "api", "cerebras"):
+        raise HTTPException(422, "backend must be 'nvidia', 'ollama', 'api', 'cerebras', or null")
 
     active = [j for j in list_jobs() if j.status in ("pending", "running")]
     if active:

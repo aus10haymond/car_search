@@ -23,7 +23,7 @@ export interface RunRequest {
   profile_ids: string[]
   dry_run: boolean
   no_llm: boolean
-  backend: 'ollama' | 'api' | 'cerebras' | null
+  backend: 'nvidia' | 'ollama' | 'api' | 'cerebras' | null
   force_email: boolean
   no_email: boolean
   debug: boolean
