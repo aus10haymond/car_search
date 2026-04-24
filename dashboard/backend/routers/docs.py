@@ -57,6 +57,28 @@ class DocContent(BaseModel):
     content: str
 
 
+class GenerateRequest(BaseModel):
+    make: str
+    model: str
+    year_start: int
+    year_end: int
+    notes: str = ""
+
+
+# Register before /{filename} so the literal path wins.
+@router.post("/generate")
+async def generate_doc(body: GenerateRequest):
+    """Use Cerebras to generate a vehicle reference markdown document."""
+    from dashboard.backend.doc_generator import generate_vehicle_doc
+    try:
+        content = generate_vehicle_doc(body.make.strip(), body.model.strip(), body.year_start, body.year_end, body.notes)
+        return {"content": content}
+    except ValueError as exc:
+        raise HTTPException(503, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, f"Generation failed: {exc}")
+
+
 @router.get("")
 def list_docs():
     """List all .md files in vehicle_reference/."""

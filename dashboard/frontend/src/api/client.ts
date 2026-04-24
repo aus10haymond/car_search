@@ -23,7 +23,7 @@ export interface RunRequest {
   profile_ids: string[]
   dry_run: boolean
   no_llm: boolean
-  backend: 'ollama' | 'api' | null
+  backend: 'ollama' | 'api' | 'cerebras' | null
   force_email: boolean
   no_email: boolean
   debug: boolean
@@ -137,9 +137,9 @@ export const API_BASE = getApiBase()
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, timeoutMs = 10_000): Promise<T> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 10_000)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   let res: Response
   try {
     res = await fetch(API_BASE + path, {
@@ -209,9 +209,16 @@ export const api = {
   },
 
   docs: {
-    list:   ()                                        => request<DocFile[]>('/docs'),
-    get:    (filename: string)                        => request<{ filename: string; content: string }>(`/docs/${filename}`),
-    put:    (filename: string, content: string)       => request<DocFile>(`/docs/${filename}`, { method: 'PUT', body: JSON.stringify({ content }) }),
-    delete: (filename: string)                        => request<void>(`/docs/${filename}`, { method: 'DELETE' }),
+    list:     ()                                                                                          => request<DocFile[]>('/docs'),
+    get:      (filename: string)                                                                          => request<{ filename: string; content: string }>(`/docs/${filename}`),
+    put:      (filename: string, content: string)                                                         => request<DocFile>(`/docs/${filename}`, { method: 'PUT', body: JSON.stringify({ content }) }),
+    delete:   (filename: string)                                                                          => request<void>(`/docs/${filename}`, { method: 'DELETE' }),
+    generate: (make: string, model: string, yearStart: number, yearEnd: number, notes: string)            => request<{ content: string }>('/docs/generate', { method: 'POST', body: JSON.stringify({ make, model, year_start: yearStart, year_end: yearEnd, notes }) }, 120_000),
+  },
+
+  system: {
+    status:     () => request<{ backend: { running: boolean; pid: number }; ngrok: { running: boolean; domain: string } }>('/system/status'),
+    ngrokStart: () => request<{ status: string; domain: string }>('/system/ngrok/start', { method: 'POST' }),
+    ngrokStop:  () => request<{ status: string }>('/system/ngrok/stop', { method: 'POST' }),
   },
 }
