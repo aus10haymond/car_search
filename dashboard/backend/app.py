@@ -23,17 +23,32 @@ from dashboard.backend.routers import (
     schedule,
     settings,
     setup,
+    system,
+    auth,
+    portal,
 )
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    # Uvicorn's dictConfig sets propagate=False on its own loggers before the
+    # lifespan runs, so root-logger handlers never see uvicorn records.
+    # Re-attach our buffer handler directly to each uvicorn logger here,
+    # after dictConfig has already done its work.
+    import logging
+    from dashboard.backend.routers.system import _bhandler
+    for _name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        _lgr = logging.getLogger(_name)
+        if _bhandler not in _lgr.handlers:
+            _lgr.addHandler(_bhandler)
+
     from dashboard.backend import app_scheduler
     await app_scheduler.startup()
     yield
     await app_scheduler.shutdown()
 
 _FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
+_PORTAL_DIST   = Path(__file__).parent.parent / "portal-dist"
 
 
 def create_app() -> FastAPI:
@@ -49,18 +64,21 @@ def create_app() -> FastAPI:
     )
 
     # ── CORS ──────────────────────────────────────────────────────────────────
-    # In dev the React app runs on :5173 and proxies API calls via vite.config.ts.
-    # The broad allow_origins list covers both dev and any local variations.
     application.add_middleware(
         CORSMiddleware,
         allow_origins=[
             "http://localhost:5173",
             "http://127.0.0.1:5173",
+            # Web portal dev server
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
             "http://localhost:8000",
             "http://127.0.0.1:8000",
             # Tauri v2 webview origins (WebView2 on Windows / WKWebView on macOS)
             "http://tauri.localhost",
             "tauri://localhost",
+            # ngrok public tunnel
+            "https://sympathy-boggle-uncouth.ngrok-free.dev",
         ],
         allow_credentials=True,
         allow_methods=["*"],
@@ -68,6 +86,7 @@ def create_app() -> FastAPI:
     )
 
     # ── Routers ───────────────────────────────────────────────────────────────
+    # Desktop dashboard routes (no auth — localhost only)
     application.include_router(profiles.router)
     application.include_router(runs.router)
     application.include_router(history.router)
@@ -75,6 +94,11 @@ def create_app() -> FastAPI:
     application.include_router(setup.router)
     application.include_router(settings.router)
     application.include_router(docs.router)
+    application.include_router(system.router)
+
+    # Web portal routes (JWT-gated)
+    application.include_router(auth.router)
+    application.include_router(portal.router)
 
     # ── Health ────────────────────────────────────────────────────────────────
     @application.get("/ping", tags=["health"])
@@ -82,7 +106,33 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     # ── Static files (production only) ────────────────────────────────────────
-    # Only mount when the frontend has been built.  In dev, Vite serves on :5173.
+    # Starlette routing conflict: an APIRouter at prefix /portal and a
+    # StaticFiles mount at /portal fight for the same path — the router wins
+    # and index.html never gets served.  Work-around: serve portal/index.html
+    # explicitly for every SPA route and mount only /portal/assets separately.
+    if _PORTAL_DIST.is_dir():
+        from fastapi.responses import FileResponse
+        from fastapi.staticfiles import StaticFiles
+
+        _portal_index = str(_PORTAL_DIST / "index.html")
+
+        @application.get("/portal", include_in_schema=False)
+        @application.get("/portal/", include_in_schema=False)
+        @application.get("/portal/{path:path}", include_in_schema=False)
+        def _portal_spa(path: str = ""):
+            # Let the browser fetch real asset files; fall back to index.html
+            # for every other path so client-side routing works.
+            candidate = _PORTAL_DIST / path
+            if candidate.is_file():
+                return FileResponse(str(candidate))
+            return FileResponse(_portal_index)
+
+        application.mount(
+            "/portal/assets",
+            StaticFiles(directory=str(_PORTAL_DIST / "assets")),
+            name="portal-assets",
+        )
+
     if _FRONTEND_DIST.is_dir():
         from fastapi.staticfiles import StaticFiles
         application.mount(

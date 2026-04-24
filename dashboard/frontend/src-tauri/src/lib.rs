@@ -49,26 +49,27 @@ pub fn run() {
             let root = project_root();
             log::info!("Project root: {}", root.display());
 
-            // On Windows use `pythonw.exe` — the windowless variant that ships
-            // with every Python install.  It is a GUI-subsystem executable so
-            // it never opens a console window regardless of how it is launched.
+            // On Windows use `py.exe -3.11` (the Python Launcher) so we always
+            // hit the Python version where the project packages are installed,
+            // regardless of which version is the system default.  py.exe lives
+            // in C:\Windows and is always in PATH.  CREATE_NO_WINDOW suppresses
+            // any console window without needing pythonw.
             // On other platforms fall back to plain `python`.
             #[cfg(target_os = "windows")]
-            let python = "pythonw";
+            let (python, extra_args): (&str, &[&str]) = ("py", &["-3.11"]);
             #[cfg(not(target_os = "windows"))]
-            let python = "python";
+            let (python, extra_args): (&str, &[&str]) = ("python", &[]);
 
             let mut cmd = Command::new(python);
-            cmd.args([
-                "-m", "uvicorn",
-                "dashboard.backend.app:app",
-                "--host", "127.0.0.1",
-                "--port", "8000",
-            ])
-            .current_dir(&root);
+            cmd.args(extra_args)
+                .args([
+                    "-m", "uvicorn",
+                    "dashboard.backend.app:app",
+                    "--host", "127.0.0.1",
+                    "--port", "8000",
+                ])
+                .current_dir(&root);
 
-            // Belt-and-suspenders: also set CREATE_NO_WINDOW in case pythonw
-            // is somehow absent and we fall back to a console-subsystem binary.
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;

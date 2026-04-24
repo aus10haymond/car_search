@@ -1,0 +1,29 @@
+{
+  "secret_key": "feace6794df94c653aafacb104bdbc6d42a0842b52f4b69cb5f7b9d78f188226",
+  "users": [
+    {
+      "username": "autospy_admin",
+      "hashed_password": "$2b$12$d7EgM/e8C2hQGVz3Oe6FCuF990qzaPa.1HkF/d2eR16Gvrz8vzE/i",
+      "role": "admin",
+      "profile_id": null
+    },
+    {
+      "username": "carter_search",
+      "hashed_password": "$2b$12$etM070dqJPt4Tq2tUwUEjeTCi77Y5bsyhE1DS/6DMkscMpPPqrfTW",
+      "role": "user",
+      "profile_id": "carter_search"
+    },
+    {
+      "username": "choppa_search",
+      "hashed_password": "$2b$12$7BLJY4VlZq9FRysuhp6AnOspORbWxsirgV0f/hYU08Br6AyOSMrcm",
+      "role": "user",
+      "profile_id": "choppa_search"
+    },
+    {
+      "username": "test",
+      "hashed_password": "$2b$12$dz2wTCSceI0ntkYsIbtOI.qJLaCXRPN2AfKDvHon6WN6Qcjid4CZS",
+      "role": "user",
+      "profile_id": "test_search"
+    }
+  ]
+}
