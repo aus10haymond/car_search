@@ -10,11 +10,16 @@ Protected:
   GET  /portal/auth/me              — current user info
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from dashboard.backend import auth_utils
 from dashboard.backend.auth_deps import get_current_user
+from dashboard.backend.app import limiter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/portal/auth", tags=["portal-auth"])
 
@@ -47,10 +52,13 @@ def setup(body: SetupRequest):
 
 
 @router.post("/login")
-def login(body: LoginRequest):
+@limiter.limit("10/minute")
+def login(request: Request, body: LoginRequest):
     user = auth_utils.get_user(body.username)
     if not user or not auth_utils.verify_password(body.password, user["hashed_password"]):
+        logger.warning("Failed login attempt for username=%r from %s", body.username, request.client)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
+    logger.info("Successful login for username=%r from %s", user["username"], request.client)
     token = auth_utils.create_access_token(
         sub=user["username"],
         role=user["role"],

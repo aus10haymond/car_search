@@ -15,11 +15,18 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Hosts that are allowed to reach the unauthenticated desktop API routes.
 # Anything else (e.g. an ngrok tunnel domain) can only access /portal/* and /ping.
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", "tauri.localhost"})
+
+# Shared rate limiter — keyed by client IP.  Attach to app.state so routers
+# can import and reuse the same instance.
+limiter = Limiter(key_func=get_remote_address)
 
 
 class _LocalOnlyMiddleware(BaseHTTPMiddleware):
@@ -106,6 +113,10 @@ def create_app() -> FastAPI:
     # Must be added AFTER CORSMiddleware so it becomes the outermost layer
     # and runs first — blocking external callers before they reach any route.
     application.add_middleware(_LocalOnlyMiddleware)
+
+    # Rate-limiter state and error handler.
+    application.state.limiter = limiter
+    application.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     # ── Routers ───────────────────────────────────────────────────────────────
     # Desktop dashboard routes (no auth — localhost only)

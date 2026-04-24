@@ -12,6 +12,7 @@ pytest>=7.0.0
 # Dashboard backend
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
+slowapi>=0.1.9
 
 # Web portal auth
 python-jose[cryptography]>=3.3.0

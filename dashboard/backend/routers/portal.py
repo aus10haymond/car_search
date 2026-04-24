@@ -8,18 +8,22 @@ All routes share the /portal prefix to keep them separate from the desktop
 dashboard routes (which remain unprotected for Tauri/localhost access).
 """
 
+import logging
 import re
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 import config
 from profiles import load_profiles, _find_vehicle_doc
 from dashboard.backend import auth_utils, settings_store
 from dashboard.backend.auth_deps import get_current_user, require_admin
+from dashboard.backend.app import limiter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -226,7 +230,8 @@ class GenerateRequest(BaseModel):
 
 # Register /docs/generate BEFORE /docs/{filename} so the literal path wins.
 @router.post("/docs/generate")
-async def generate_doc(body: GenerateRequest, _: dict = Depends(get_current_user)):
+@limiter.limit("20/hour")
+async def generate_doc(request: Request, body: GenerateRequest, _: dict = Depends(get_current_user)):
     """Use Cerebras to generate a vehicle reference markdown document."""
     from dashboard.backend.doc_generator import generate_vehicle_doc
     try:
@@ -346,14 +351,16 @@ def list_users(_: dict = Depends(require_admin)):
 
 
 @router.post("/users", status_code=201)
-def create_user(body: CreateUserRequest, _: dict = Depends(require_admin)):
+def create_user(body: CreateUserRequest, admin: dict = Depends(require_admin)):
     if auth_utils.get_user(body.username):
         raise HTTPException(409, f"User '{body.username}' already exists")
     if len(body.password) < 8:
         raise HTTPException(422, "Password must be at least 8 characters")
     if body.role not in ("admin", "user"):
         raise HTTPException(422, "role must be 'admin' or 'user'")
-    return _pub(auth_utils.create_user(body.username.strip(), body.password, body.role, body.profile_id))
+    result = auth_utils.create_user(body.username.strip(), body.password, body.role, body.profile_id)
+    logger.info("User %r created (role=%s) by admin %r", body.username, body.role, admin["username"])
+    return _pub(result)
 
 
 @router.delete("/users/{username}", status_code=204)
@@ -362,6 +369,7 @@ def delete_user(username: str, current: dict = Depends(require_admin)):
         raise HTTPException(400, "Cannot delete your own account")
     if not auth_utils.delete_user(username):
         raise HTTPException(404, f"User '{username}' not found")
+    logger.info("User %r deleted by admin %r", username, current["username"])
 
 
 @router.put("/users/{username}/password")
@@ -372,6 +380,7 @@ def change_password(username: str, body: UpdatePasswordRequest, current: dict = 
         raise HTTPException(422, "Password must be at least 8 characters")
     if not auth_utils.update_password(username, body.password):
         raise HTTPException(404, f"User '{username}' not found")
+    logger.info("Password changed for %r by %r", username, current["username"])
     return {"message": "Password updated"}
 
 
