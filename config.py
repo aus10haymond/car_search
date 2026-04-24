@@ -59,6 +59,12 @@ ANTHROPIC_API_KEY:    str  = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL:      str  = _s["anthropic_model"]
 ANTHROPIC_MAX_TOKENS: int  = _s["anthropic_max_tokens"]
 
+# ── AI analysis & doc generation — Cerebras ──────────────────────────────────
+CEREBRAS_API_KEY:    str  = os.getenv("CEREBRAS_API_KEY", "")
+CEREBRAS_ENABLED:    bool = _s["cerebras_enabled"]
+CEREBRAS_MODEL:      str  = _s["cerebras_model"]
+CEREBRAS_MAX_TOKENS: int  = _s["cerebras_max_tokens"]
+
 # ── Email — Gmail API (optional) ─────────────────────────────────────────────
 # Recipients are configured per-profile in profiles.yaml.
 # Run  python setup_gmail_oauth.py  once to populate the three OAuth values.

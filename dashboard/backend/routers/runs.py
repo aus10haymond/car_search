@@ -42,8 +42,8 @@ class RunRequest(BaseModel):
 @router.post("")
 async def start_run(req: RunRequest, background_tasks: BackgroundTasks):
     """Create and start a run job. Returns immediately with a job_id."""
-    if req.backend and req.backend not in ("ollama", "api"):
-        raise HTTPException(422, "backend must be 'ollama', 'api', or null")
+    if req.backend and req.backend not in ("ollama", "api", "cerebras"):
+        raise HTTPException(422, "backend must be 'ollama', 'api', 'cerebras', or null")
 
     options = RunOptions(
         profile_ids=req.profile_ids,

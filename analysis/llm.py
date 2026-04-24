@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import config
 from analysis.ollama_client import OllamaClient, OllamaUnavailableError, OllamaModelError
 from analysis.anthropic_client import AnthropicClient, AnthropicUnavailableError
+from analysis.cerebras_client import CerebrasClient, CerebrasUnavailableError
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +45,11 @@ class LLMAnalyzer:
             api_key=config.ANTHROPIC_API_KEY,
             model=config.ANTHROPIC_MODEL,
             max_tokens=config.ANTHROPIC_MAX_TOKENS,
+        )
+        self.cerebras = CerebrasClient(
+            api_key=config.CEREBRAS_API_KEY,
+            model=config.CEREBRAS_MODEL,
+            max_tokens=config.CEREBRAS_MAX_TOKENS,
         )
         self.backend_used: str | None = None
         self._reference_doc   = reference_doc
@@ -142,7 +148,38 @@ class LLMAnalyzer:
         else:
             log.debug("Ollama disabled in config")
 
-        # ── Step 2: Anthropic API (fallback) ──────────────────────────────────
+        # ── Step 2: Cerebras API ──────────────────────────────────────────────
+        if config.CEREBRAS_ENABLED:
+            if self.cerebras.is_configured():
+                t0 = time.monotonic()
+                try:
+                    text = self.cerebras.analyze(prompt, reference_doc=effective_ref)
+                    latency = int((time.monotonic() - t0) * 1000)
+                    log.info(
+                        "LLM analysis complete via Cerebras/%s (%dms)",
+                        config.CEREBRAS_MODEL, latency,
+                    )
+                    self.backend_used = "cerebras"
+                    cleaned_text, top_pick_vins = self._parse_top_picks(text)
+                    return LLMResult(
+                        analysis=cleaned_text,
+                        backend_used="cerebras",
+                        model_used=config.CEREBRAS_MODEL,
+                        tokens_used=None,
+                        latency_ms=latency,
+                        error=None,
+                        top_pick_vins=top_pick_vins,
+                    )
+                except CerebrasUnavailableError as exc:
+                    log.error(
+                        "Cerebras API failed: %s — falling back to Anthropic API", exc
+                    )
+            else:
+                log.warning("Cerebras API key not configured — skipping Cerebras")
+        else:
+            log.debug("Cerebras disabled in config")
+
+        # ── Step 3: Anthropic API (fallback) ──────────────────────────────────
         if config.ANTHROPIC_ENABLED:
             if self.anthropic.is_configured():
                 t0 = time.monotonic()
@@ -184,7 +221,7 @@ class LLMAnalyzer:
             model_used="",
             tokens_used=None,
             latency_ms=0,
-            error="No LLM backend available (network Ollama unreachable/no model loaded, Anthropic API not configured or disabled)",
+            error="No LLM backend available (Ollama unreachable/no model, Cerebras/Anthropic not configured or disabled)",
         )
 
     @staticmethod
