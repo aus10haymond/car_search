@@ -18,6 +18,7 @@ from dashboard.backend.job_manager import (
     launch_job,
     cancel_job,
     iter_logs,
+    list_jobs,
 )
 
 _PROFILES_YAML = Path(__file__).parent.parent.parent.parent / "profiles.yaml"
@@ -44,6 +45,10 @@ async def start_run(req: RunRequest, background_tasks: BackgroundTasks):
     """Create and start a run job. Returns immediately with a job_id."""
     if req.backend and req.backend not in ("ollama", "api", "cerebras"):
         raise HTTPException(422, "backend must be 'ollama', 'api', 'cerebras', or null")
+
+    active = [j for j in list_jobs() if j.status in ("pending", "running")]
+    if active:
+        raise HTTPException(409, f"A run is already in progress (job_id={active[0].job_id})")
 
     options = RunOptions(
         profile_ids=req.profile_ids,

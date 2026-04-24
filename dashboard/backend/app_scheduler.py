@@ -158,9 +158,16 @@ def _schedule_next() -> None:
         try:
             last = datetime.fromisoformat(_last_run_at.replace("Z", "+00:00"))
             candidate = last + interval
+            missed = False
             while candidate <= now:          # skip any missed intervals
                 candidate += interval
-            _next_run_at = max(candidate, now + min_delay)
+                missed = True
+            if missed:
+                # At least one scheduled run was skipped (e.g. computer was off).
+                # Fire soon after startup rather than waiting a full interval.
+                _next_run_at = now + min_delay
+            else:
+                _next_run_at = max(candidate, now + min_delay)
             return
         except Exception:
             pass
