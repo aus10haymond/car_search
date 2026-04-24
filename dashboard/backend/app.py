@@ -12,8 +12,26 @@ Prod (after npm run build):
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# Hosts that are allowed to reach the unauthenticated desktop API routes.
+# Anything else (e.g. an ngrok tunnel domain) can only access /portal/* and /ping.
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", "tauri.localhost"})
+
+
+class _LocalOnlyMiddleware(BaseHTTPMiddleware):
+    """Block external callers from the unauthenticated desktop dashboard routes."""
+
+    async def dispatch(self, request: Request, call_next):
+        host = request.headers.get("host", "").split(":")[0].lower()
+        if host not in _LOCAL_HOSTS:
+            path = request.url.path
+            if not (path == "/ping" or path.startswith("/portal")):
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
+        return await call_next(request)
 
 from dashboard.backend.routers import (
     docs,
@@ -84,6 +102,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Must be added AFTER CORSMiddleware so it becomes the outermost layer
+    # and runs first — blocking external callers before they reach any route.
+    application.add_middleware(_LocalOnlyMiddleware)
 
     # ── Routers ───────────────────────────────────────────────────────────────
     # Desktop dashboard routes (no auth — localhost only)
