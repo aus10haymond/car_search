@@ -40,7 +40,7 @@ _DEFAULTS: dict = {
         "qwen3.5:4b",
         "gemma4:e2b",
     ],
-    "ngrok_domain": "sympathy-boggle-uncouth.ngrok-free.dev",
+    "ngrok_domain": "",  # set NGROK_DOMAIN in .env instead
     "anthropic_enabled": True,
     "anthropic_model": "claude-haiku-4-5-20251001",
     "anthropic_max_tokens": 1500,

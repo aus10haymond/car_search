@@ -9,9 +9,11 @@ Prod (after npm run build):
     (React dist/ is served as static files from the same process)
 """
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -19,6 +21,8 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
+
+load_dotenv()
 
 # Hosts that are allowed to reach the unauthenticated desktop API routes.
 # Anything else (e.g. an ngrok tunnel domain) can only access /portal/* and /ping.
@@ -89,22 +93,24 @@ def create_app() -> FastAPI:
     )
 
     # ── CORS ──────────────────────────────────────────────────────────────────
+    _origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        # Tauri v2 webview origins (WebView2 on Windows / WKWebView on macOS)
+        "http://tauri.localhost",
+        "tauri://localhost",
+    ]
+    _ngrok_domain = os.getenv("NGROK_DOMAIN", "").strip()
+    if _ngrok_domain:
+        _origins.append(f"https://{_ngrok_domain}")
+
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            # Web portal dev server
-            "http://localhost:5174",
-            "http://127.0.0.1:5174",
-            "http://localhost:8000",
-            "http://127.0.0.1:8000",
-            # Tauri v2 webview origins (WebView2 on Windows / WKWebView on macOS)
-            "http://tauri.localhost",
-            "tauri://localhost",
-            # ngrok public tunnel
-            "https://sympathy-boggle-uncouth.ngrok-free.dev",
-        ],
+        allow_origins=_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

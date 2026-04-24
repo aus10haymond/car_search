@@ -16,6 +16,9 @@ import os
 import threading
 from typing import Optional
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
@@ -91,11 +94,15 @@ async def _drain_ngrok_output() -> None:
 
 
 def _get_ngrok_domain() -> str:
+    # Env var takes priority; fall back to whatever is saved in settings.
+    env_domain = os.getenv("NGROK_DOMAIN", "").strip()
+    if env_domain:
+        return env_domain
     try:
         from dashboard.backend import settings_store
-        return settings_store.load().get("ngrok_domain", "sympathy-boggle-uncouth.ngrok-free.dev")
+        return settings_store.load().get("ngrok_domain", "")
     except Exception:
-        return "sympathy-boggle-uncouth.ngrok-free.dev"
+        return ""
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
