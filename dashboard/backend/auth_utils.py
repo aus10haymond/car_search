@@ -1,11 +1,14 @@
 """
 User store and JWT utilities for the web portal.
 
-Users are persisted in users.json at the project root alongside a randomly-generated
-secret key that is created on first access and never changes unless the file is deleted.
+Users are persisted in users.json at the project root.
+The JWT signing secret is stored separately in auth_secret.key (also at the
+project root) so it is never co-located with password hashes.  Both files are
+gitignored.
 """
 
 import json
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -14,33 +17,52 @@ from typing import Optional
 import bcrypt
 from jose import jwt
 
-_USERS_FILE = Path(__file__).parent.parent.parent / "users.json"
-_ALGORITHM = "HS256"
+_USERS_FILE  = Path(__file__).parent.parent.parent / "users.json"
+_SECRET_FILE = Path(__file__).parent.parent.parent / "auth_secret.key"
+_ALGORITHM   = "HS256"
 _TOKEN_HOURS = 8
 
+logger = logging.getLogger(__name__)
 
-# ── Internal store helpers ────────────────────────────────────────────────────
+
+# ── JWT signing key ───────────────────────────────────────────────────────────
+
+def _secret_key() -> str:
+    """Return the persistent JWT signing secret, creating it on first use."""
+    if _SECRET_FILE.exists():
+        key = _SECRET_FILE.read_text(encoding="utf-8").strip()
+        if key:
+            return key
+    # Generate and persist a new key.
+    key = secrets.token_hex(32)
+    _SECRET_FILE.write_text(key, encoding="utf-8")
+    logger.info("auth_secret.key created")
+    return key
+
+
+# ── Internal user-store helpers ───────────────────────────────────────────────
 
 def _load() -> dict:
     if not _USERS_FILE.exists():
-        return {"secret_key": secrets.token_hex(32), "users": []}
+        return {"users": []}
     try:
-        return json.loads(_USERS_FILE.read_text(encoding="utf-8"))
+        data = json.loads(_USERS_FILE.read_text(encoding="utf-8"))
+        # Migrate: remove legacy secret_key field if present.
+        if "secret_key" in data:
+            # Recover the key into auth_secret.key if we haven't generated one yet.
+            if not _SECRET_FILE.exists():
+                _SECRET_FILE.write_text(data["secret_key"], encoding="utf-8")
+                logger.info("Migrated JWT secret from users.json to auth_secret.key")
+            del data["secret_key"]
+            _save(data)
+        return data
     except Exception:
-        return {"secret_key": secrets.token_hex(32), "users": []}
+        logger.error("Failed to parse users.json — treating as empty")
+        return {"users": []}
 
 
 def _save(store: dict) -> None:
     _USERS_FILE.write_text(json.dumps(store, indent=2), encoding="utf-8")
-
-
-def _secret_key() -> str:
-    store = _load()
-    if "secret_key" not in store:
-        store["secret_key"] = secrets.token_hex(32)
-        _save(store)
-        return store["secret_key"]
-    return store["secret_key"]
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -71,6 +93,7 @@ def create_access_token(sub: str, role: str, profile_id: Optional[str]) -> str:
         "role": role,
         "profile_id": profile_id,
         "exp": datetime.now(timezone.utc) + timedelta(hours=_TOKEN_HOURS),
+        "iat": datetime.now(timezone.utc),
     }
     return jwt.encode(payload, _secret_key(), algorithm=_ALGORITHM)
 
