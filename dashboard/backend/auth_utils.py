@@ -10,6 +10,7 @@ gitignored.
 import json
 import logging
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -109,6 +110,7 @@ def create_user(username: str, password: str, role: str, profile_id: Optional[st
         "hashed_password": hash_password(password),
         "role": role,
         "profile_id": profile_id,
+        "pw_changed_at": int(time.time()),
     }
     store.setdefault("users", []).append(user)
     _save(store)
@@ -130,6 +132,7 @@ def update_password(username: str, new_password: str) -> bool:
     for u in store.get("users", []):
         if u["username"] == username:
             u["hashed_password"] = hash_password(new_password)
+            u["pw_changed_at"] = int(time.time())
             _save(store)
             return True
     return False
