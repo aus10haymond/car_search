@@ -116,14 +116,15 @@ def create_app() -> FastAPI:
 
         _portal_index = str(_PORTAL_DIST / "index.html")
 
+        _portal_dist_resolved = _PORTAL_DIST.resolve()
+
         @application.get("/portal", include_in_schema=False)
         @application.get("/portal/", include_in_schema=False)
         @application.get("/portal/{path:path}", include_in_schema=False)
         def _portal_spa(path: str = ""):
-            # Let the browser fetch real asset files; fall back to index.html
-            # for every other path so client-side routing works.
-            candidate = _PORTAL_DIST / path
-            if candidate.is_file():
+            # Resolve and guard against path traversal before serving any file.
+            candidate = (_PORTAL_DIST / path).resolve()
+            if str(candidate).startswith(str(_portal_dist_resolved)) and candidate.is_file():
                 return FileResponse(str(candidate))
             return FileResponse(_portal_index)
 

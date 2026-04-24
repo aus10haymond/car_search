@@ -1,4 +1,6 @@
 .env
+users.json
+auth_secret.key
 carvana_results/
 __pycache__/
 *.pyc
