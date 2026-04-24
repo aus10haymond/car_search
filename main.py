@@ -550,26 +550,25 @@ def _run_llm(
     original_anthropic = config.ANTHROPIC_ENABLED
     original_cerebras  = config.CEREBRAS_ENABLED
     if force_backend == "nvidia":
-        config.CEREBRAS_ENABLED  = False
-        config.ANTHROPIC_ENABLED = False
-        config.OLLAMA_ENABLED    = False
+        # Start chain from NVIDIA; leave the rest enabled so fallback still works
         config.NVIDIA_ENABLED    = True
-        log.info("Backend forced to NVIDIA NIM only")
-    elif force_backend == "ollama":
-        config.NVIDIA_ENABLED    = False
-        config.ANTHROPIC_ENABLED = False
-        config.CEREBRAS_ENABLED  = False
-        log.info("Backend forced to Ollama only")
-    elif force_backend == "api":
-        config.NVIDIA_ENABLED   = False
-        config.OLLAMA_ENABLED   = False
-        config.CEREBRAS_ENABLED = False
-        log.info("Backend forced to Anthropic API only")
+        log.info("Backend starting from NVIDIA NIM (fallback chain active)")
     elif force_backend == "cerebras":
+        # Skip NVIDIA, start from Cerebras
         config.NVIDIA_ENABLED    = False
-        config.OLLAMA_ENABLED    = False
-        config.ANTHROPIC_ENABLED = False
         config.CEREBRAS_ENABLED  = True
+        log.info("Backend starting from Cerebras (fallback chain active)")
+    elif force_backend == "api":
+        # Skip NVIDIA and Cerebras, start from Anthropic
+        config.NVIDIA_ENABLED    = False
+        config.CEREBRAS_ENABLED  = False
+        log.info("Backend starting from Anthropic API (fallback chain active)")
+    elif force_backend == "ollama":
+        # Skip all cloud backends, use Ollama only
+        config.NVIDIA_ENABLED    = False
+        config.CEREBRAS_ENABLED  = False
+        config.ANTHROPIC_ENABLED = False
+        log.info("Backend forced to Ollama only")
         log.info("Backend forced to Cerebras only")
 
     try:
