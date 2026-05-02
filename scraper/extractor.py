@@ -699,7 +699,7 @@ def fetch_listing_drivetrain(url: str, browser) -> str | None:
       3. Label/value pattern — finds a "Drivetrain" label and reads its sibling
       4. Broad AWD/FWD/RWD/4WD keyword scan of the page (last resort)
     """
-    html = browser.get_page_content(url)
+    html = browser.get_page_content(url, force_full_load=True)
     if not html:
         return None
 

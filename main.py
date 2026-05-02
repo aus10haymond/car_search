@@ -440,9 +440,6 @@ def _scrape_listing_drivetrains(
     log.info("Scraping Carvana listing pages for drivetrain: %d listing(s)", len(to_scrape))
     updated = 0
 
-    # Reset context once so we share session state but start a clean page
-    browser.reset_context()
-
     for r in to_scrape:
         url = r.get("url", "")
         drivetrain = fetch_listing_drivetrain(url, browser)

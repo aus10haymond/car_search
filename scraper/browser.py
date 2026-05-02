@@ -97,16 +97,26 @@ class Browser:
         self._new_context()
         log.debug("Browser context reset")
 
-    def get_page_content(self, url: str) -> str:
+    def get_page_content(self, url: str, force_full_load: bool = False) -> str:
         """
         Navigate the persistent page to `url` and return raw HTML.
         Reusing the same page across pagination preserves referrer headers
         and browser state, avoiding bot detection on page 2+.
         Returns empty string on TimeoutError; does not raise.
+
+        force_full_load: navigate to about:blank first to break Carvana's SPA
+        router, ensuring the target URL gets a full server-rendered page load
+        rather than a lightweight client-side navigation (~34KB vs ~436KB).
         """
         from playwright.sync_api import TimeoutError as PWTimeout
 
         try:
+            if force_full_load:
+                try:
+                    self._page.goto("about:blank", wait_until="load", timeout=5000)
+                except Exception:
+                    pass
+
             self._page.goto(
                 url,
                 wait_until="load",
