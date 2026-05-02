@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { api } from '../api/client'
 import type { Profile, RunRequest, ResendResult } from '../api/client'
 import { LogTerminal } from '../components/LogTerminal'
@@ -8,9 +8,10 @@ type Backend = 'auto' | 'nvidia' | 'ollama' | 'api' | 'cerebras' | 'none'
 
 interface RunViewProps {
   onActiveJobChange?: (active: boolean) => void
+  externalJobId?: string | null
 }
 
-export function RunView({ onActiveJobChange }: RunViewProps) {
+export function RunView({ onActiveJobChange, externalJobId }: RunViewProps) {
   const [profiles, setProfiles]           = useState<Profile[]>([])
   const [selected, setSelected]           = useState<Set<string>>(new Set())
   const [backend, setBackend]             = useState<Backend>('auto')
@@ -28,6 +29,22 @@ export function RunView({ onActiveJobChange }: RunViewProps) {
   useEffect(() => {
     api.profiles.list().then(setProfiles).catch(console.error)
   }, [])
+
+  // Pick up a job started externally (scheduler or Run Now from Schedule page).
+  // Only takes effect when RunView is idle so it never interrupts a manual run.
+  const prevExternalJobIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!externalJobId) return
+    if (externalJobId === prevExternalJobIdRef.current) return
+    prevExternalJobIdRef.current = externalJobId
+    if (!running) {
+      setJobId(externalJobId)
+      setRunning(true)
+      setPreviewHtml(null)
+      setError(null)
+      onActiveJobChange?.(true)
+    }
+  }, [externalJobId, running, onActiveJobChange])
 
   const toggleProfile = (id: string) =>
     setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })

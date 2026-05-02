@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { NavLink, Routes, Route, Navigate } from 'react-router-dom'
+import { NavLink, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { api } from './api/client'
 import type { SetupStatus, ScheduleStatus } from './api/client'
 import { useTheme } from './hooks/useTheme'
@@ -24,14 +24,19 @@ const NAV = [
 
 export default function App() {
   useTheme() // initialises theme class on <html> and reacts to OS changes
-  const [setupStatus, setSetupStatus]     = useState<SetupStatus | null>(null)
+  const navigate                            = useNavigate()
+  const [setupStatus, setSetupStatus]       = useState<SetupStatus | null>(null)
   const [scheduleStatus, setScheduleStatus] = useState<ScheduleStatus | null>(null)
-  const [lastRun, setLastRun]             = useState<string | null>(null)
-  const [activeJob, setActiveJob]         = useState(false)
+  const [lastRun, setLastRun]               = useState<string | null>(null)
+  const [activeJob, setActiveJob]           = useState(false)
+  const [activeJobId, setActiveJobId]       = useState<string | null>(null)
   // Incremented once when the backend first responds — remounts all views so
   // they re-fetch data even if their initial load fired before uvicorn was ready.
-  const [routesKey, setRoutesKey]         = useState(0)
-  const backendReadyRef                   = useRef(false)
+  const [routesKey, setRoutesKey]           = useState(0)
+  const backendReadyRef                     = useRef(false)
+  const prevScheduledJobRef                 = useRef<string | null>(null)
+  const activeJobRef                        = useRef(false)
+  activeJobRef.current                      = activeJob
 
   // Poll setup + schedule status every 30s for status bar.
   // On startup, also retry every 2s until the backend first responds so that
@@ -55,6 +60,30 @@ export default function App() {
     const slowId  = setInterval(poll, 30_000)
     return () => { clearInterval(quickId); clearInterval(slowId) }
   }, [])
+
+  // Faster poll while a scheduled job is running so the status bar stays accurate.
+  useEffect(() => {
+    if (!scheduleStatus?.running_job) return
+    const id = setInterval(async () => {
+      try { setScheduleStatus(await api.schedule.get()) } catch { /* ignore */ }
+    }, 5_000)
+    return () => clearInterval(id)
+  }, [!!scheduleStatus?.running_job])
+
+  // When a scheduled job starts and RunView is idle, navigate there and show it.
+  useEffect(() => {
+    const jobId = scheduleStatus?.running_job?.job_id ?? null
+    const prev  = prevScheduledJobRef.current
+    prevScheduledJobRef.current = jobId
+
+    if (jobId && jobId !== prev && !activeJobRef.current) {
+      setActiveJobId(jobId)
+      navigate('/run')
+    }
+    if (!jobId) {
+      setActiveJobId(null)
+    }
+  }, [scheduleStatus?.running_job?.job_id, navigate])
 
   // Refresh last run time from history whenever a job finishes
   useEffect(() => {
@@ -114,7 +143,7 @@ export default function App() {
         <main className="flex-1 overflow-y-auto p-6">
           <Routes key={routesKey}>
             <Route path="/" element={<Navigate to="/run" replace />} />
-            <Route path="/run"      element={<RunView onActiveJobChange={setActiveJob} />} />
+            <Route path="/run"      element={<RunView onActiveJobChange={setActiveJob} externalJobId={activeJobId} />} />
             <Route path="/schedule" element={<ScheduleView />} />
             <Route path="/profiles" element={<ProfilesView />} />
             <Route path="/history"  element={<HistoryView />} />
