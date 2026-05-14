@@ -242,12 +242,12 @@ def _build_html(
     # ── Build table listing set ───────────────────────────────────────────────
     # LLM top picks always lead the table (in LLM rank order), then fill the
     # remaining slots with non-pick listings sorted by score.
-    if num_vehicles > 1:
+    if num_vehicles > 2:
         table_limit = 5   # per model cap for the fill section
         table_label = "Top 5 per Model"
     else:
-        table_limit = 15
-        table_label = "Top 15 Listings"
+        table_limit = 25
+        table_label = "Top 25 Listings"
 
     vin_to_listing: dict[str, dict] = {r.get("vin"): r for r in listings if r.get("vin")}
 
@@ -257,7 +257,7 @@ def _build_html(
     table_vin_set: set[str] = set(llm_pick_order)
 
     # 2. Fill remaining slots with non-pick listings up to the per-model/total cap.
-    if num_vehicles > 1:
+    if num_vehicles > 2:
         seen_counts: dict[tuple[str, str], int] = {}
         # Pre-count LLM picks toward their model quotas so picks don't consume
         # fill slots twice.
@@ -273,10 +273,13 @@ def _build_html(
                 table_vin_set.add(r.get("vin") or "")
                 seen_counts[key] = seen_counts.get(key, 0) + 1
     else:
-        for r in listings:
-            if (r.get("vin") or "") not in table_vin_set:
-                table_listings.append(r)
-                table_vin_set.add(r.get("vin") or "")
+        fill_listings = sorted(
+            (r for r in listings if (r.get("vin") or "") not in table_vin_set),
+            key=lambda x: -(x.get("value_score") or 0),
+        )
+        for r in fill_listings:
+            table_listings.append(r)
+            table_vin_set.add(r.get("vin") or "")
             if len(table_listings) >= table_limit:
                 break
 

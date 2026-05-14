@@ -414,23 +414,25 @@ def _scrape_listing_drivetrains(
     Load individual Carvana listing pages for the top table-row candidates and
     update their drivetrain field with Carvana's own label.
 
-    Uses the same per-model cap as the email table (5 for multi-vehicle profiles,
-    15 for single-vehicle) so every listing the reader sees gets an accurate value.
-    NHTSA data on non-table listings is unaffected.
+    Uses the same cap as the email table (5 per model for 3+ vehicle profiles,
+    25 total for 1-2 vehicle profiles) so every listing the reader sees gets an
+    accurate value. NHTSA data on non-table listings is unaffected.
 
     Accepts the already-open scrape browser so Carvana's bot detection does not
     flag the requests — the session is already trusted from Phase 1 scraping.
     """
-    table_limit = 5 if num_vehicles > 1 else 15
-
-    # Mirror the email table's fill logic: top-N per (make, model) in score order
-    seen_counts: dict[tuple[str, str], int] = {}
-    table_candidates: list[dict] = []
-    for r in enriched:
-        key = (r.get("make") or "", r.get("model") or "")
-        if seen_counts.get(key, 0) < table_limit:
-            table_candidates.append(r)
-            seen_counts[key] = seen_counts.get(key, 0) + 1
+    if num_vehicles > 2:
+        # Per-model cap: mirror the email table's seen_counts fill logic.
+        seen_counts: dict[tuple[str, str], int] = {}
+        table_candidates: list[dict] = []
+        for r in enriched:
+            key = (r.get("make") or "", r.get("model") or "")
+            if seen_counts.get(key, 0) < 5:
+                table_candidates.append(r)
+                seen_counts[key] = seen_counts.get(key, 0) + 1
+    else:
+        # 25 total cap; enriched is already sorted by preference + score desc.
+        table_candidates = enriched[:25]
 
     to_scrape = [r for r in table_candidates if r.get("url")]
     if not to_scrape:
@@ -582,10 +584,10 @@ def _run_llm(
             r.get("make", "") for r in listings if r.get("make")
         ))
 
-        # For multi-model profiles, cap each make at top 5 listings for the LLM
-        # so that every vehicle the LLM recommends is guaranteed to appear in
-        # the email table (which also shows top 5 per model).
-        llm_cap = 5 if len(makes) > 1 else 30
+        # For 3+ model profiles, cap each make at top 5 for the LLM so picks
+        # are guaranteed to appear in the email table (also capped at 5 per model).
+        # For 1-2 model profiles the email table shows 25 total, so send 25 per make.
+        llm_cap = 5 if len(makes) > 2 else 25
 
         per_make_results: list[tuple[str, LLMResult]] = []
         for make in makes:
@@ -607,15 +609,17 @@ def _run_llm(
                 if result.analysis
             ]
             if successful:
-                # Build a top-5-per-(make, model) slice for synthesis — mirrors
-                # the email table cap so LLM picks are always present in the table.
-                _seen: dict[tuple, int] = {}
-                top_for_synthesis: list[dict] = []
-                for r in listings:
-                    key = (r.get("make", ""), r.get("model", ""))
-                    if _seen.get(key, 0) < 5:
-                        top_for_synthesis.append(r)
-                        _seen[key] = _seen.get(key, 0) + 1
+                # Build the synthesis slice mirroring the email table cap.
+                if len(makes) > 2:
+                    _seen: dict[tuple, int] = {}
+                    top_for_synthesis: list[dict] = []
+                    for r in listings:
+                        key = (r.get("make", ""), r.get("model", ""))
+                        if _seen.get(key, 0) < 5:
+                            top_for_synthesis.append(r)
+                            _seen[key] = _seen.get(key, 0) + 1
+                else:
+                    top_for_synthesis = listings[:25]
 
                 log.info(
                     "Running cross-model synthesis across %d makes (%d listings)",
