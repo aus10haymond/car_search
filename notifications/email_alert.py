@@ -411,6 +411,10 @@ def _build_html(
         )
 
     parts.append("</table>")
+    parts.append(
+        "<p style='font-size:12px;color:#555;margin-top:4px'>"
+        "Drivetrain shown may be inaccurate — verify on the listing page before purchasing.</p>"
+    )
     has_db_drops     = any(r.get("vin") in drop_by_vin for r in table_listings)
     has_carvana_drops = any(r.get("is_carvana_price_drop") for r in table_listings)
     if has_db_drops and has_carvana_drops:
